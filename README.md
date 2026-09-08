@@ -72,6 +72,22 @@ python3 skills/ingest-url/scripts/test_ingest.py
 Runs every path in both directions against live URLs: a working link must yield text, a
 paywalled or missing one must fail. About a minute.
 
+## Eval
+
+`evals/` holds five cases in the `claude plugin eval` format: a non-link task that must not
+trigger the skill, a number that exists only in a PDF body, a reel with no captions, a chapter
+list, and a figure spoken inside a 77-minute talk. Each has a skill-fired indicator, a regex on
+the ground truth, and a rubric graded by a judge model.
+
+```bash
+claude plugin eval .                 # when enabled on your account
+evals/run.py --runs 2                # same cases, same with/without ablation, works today
+```
+
+Measured result on Claude Code: the skill wins where the answer lives in audio or on a slide
+(1.00 with, 0.50 to 0.75 without) and breaks even on tasks the model already knows how to do
+from metadata. Numbers and the description A/B are in EVAL.md.
+
 ## Limits
 
 TikTok is untested. Speech-to-text is Apple Silicon only. The script reads English captions;

@@ -85,6 +85,37 @@ Operational notes: llama.cpp keeps generating after a client is killed, so a kil
 single slot for minutes; poll `/slots` before each run. pi buffers `--mode json` output when piped
 and loses it if killed, so give runs a generous cap rather than a tight one.
 
+## Plugin eval: with vs without, and description A/B (Claude Code, Fable 5.1)
+
+`evals/` holds five cases in the `claude plugin eval` format (that command was still gated on this
+account, so `evals/run.py` drives the same files: fresh `claude -p` session per run, plugin loaded
+via `--plugin-dir` in the with arm and absent in the without arm, regex graders in code, rubric
+graders judged by Haiku). Two runs per cell. WebFetch was allowed in every run, which the earlier
+trigger test had not done; that omission had flattered the fire rate.
+
+| case | v1 description, with | v2 description, with | without |
+|---|---|---|---|
+| non-link shell task (must not fire) | 1.00, fired 0/2 | 1.00, fired 0/2 | 1.00 |
+| number only in a PDF body | 1.00, fired 0/2, $0.46 | 1.00, fired 1/2, $0.51 | 1.00, $0.45 |
+| Instagram reel, no captions | 1.00, fired 2/2, $0.52 | 1.00, fired 2/2, $0.51 | 0.75, $0.51 |
+| chapters of a 77-min talk | 1.00, fired 2/2, $0.95 | 1.00, fired 2/2, $0.95 | 1.00, $0.40 |
+| timestamped figures inside the talk | 1.00, fired 2/2, $0.90 | 1.00, fired 2/2, $1.05 | 0.50, $0.52 |
+
+Reading:
+- The skill wins where the answer lives in audio or on a slide: the reel (unaided runs leaned on
+  the caption half the time) and the in-talk figures (unaided runs found the spoken 60% but never
+  the 67.1% that is only on a slide). Both cases: 1.00 with, 0.50 to 0.75 without.
+- It does not win on chapters or on a PDF number for this model, which knows yt-dlp metadata and
+  curl plus pdftotext on its own; there the skill costs about 2x for the same answer.
+- v1's description lost to WebFetch on PDF links every time. v2 names WebFetch and states what it
+  cannot read; fire rate on the PDF case went from 0/2 to 1/2 with no change elsewhere. Small
+  sample, so recorded as a direction, not a result.
+- Two eval bugs cost a full run each and are worth knowing: Haiku wraps its JSON verdict in a code
+  fence, so the parser must find the first `{`; and YAML rejects `\.` inside double-quoted regex
+  patterns, so grader patterns use single quotes. The runner now validates every case file before
+  spending money and writes results after each run.
+- Total spend for all eval runs, including the two wasted ones: about $17.
+
 ## Not covered yet
 - TikTok (needs a video URL).
 - Linux speech-to-text (mlx-whisper is Apple Silicon only).

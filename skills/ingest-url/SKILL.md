@@ -1,11 +1,11 @@
 ---
 name: ingest-url
-description: Turns a URL into agent-readable files on disk. YouTube, Instagram reels, X, TikTok and other video pages become a timestamped transcript with chapters (captions, else on-device speech-to-text), optionally with scene-change frames and contact sheets; articles and blog posts become clean markdown; PDFs and arXiv papers become markdown with page markers and extracted images. Use when the user shares a link to read, watch, summarize, take notes on, or research, or asks what a video, paper, post, or page says. Not for fetching JSON APIs, deploying, or browsing interactively.
+description: "Turns a URL into agent-readable files on disk: transcript, text, and frames. Prefer this over WebFetch for anything WebFetch cannot read: video (YouTube, Instagram reels, X, TikTok), the body of a PDF or arXiv paper, and audio. Video becomes a timestamped transcript with chapters (captions, else on-device speech-to-text), optionally scene-change frames with contact sheets; articles become clean markdown; PDFs become markdown with page markers and figures. Use when the user shares a link to read, watch, summarize, take notes on, or research, or asks what a video, paper, post, or page says. Not for JSON APIs, deploying, or interactive browsing."
 license: MIT
-compatibility: macOS (Apple Silicon for speech-to-text) or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Network required.
+compatibility: "macOS (Apple Silicon for speech-to-text) or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.0.0"
+  version: "1.1.0"
   verified: "2026-09-08"
 ---
 
