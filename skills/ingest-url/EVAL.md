@@ -1,0 +1,90 @@
+# ingest-url: criteria, vendor tests, and measured results
+
+Method: criteria and blind predictions were written before any install. Every candidate was then
+run against the same URLs and adopted per criterion, not wholesale. All numbers are from execution
+on 2026-09-08 on a MacBook Pro (Apple Silicon), except the second-harness section, which used a
+remote 27B model. Test URLs are in `scripts/test_ingest.py`.
+
+## Criteria -> result
+
+| # | criterion | result |
+|---|---|---|
+| C1 | video -> text.md with [mm:ss] + CHAPTER lines; unavailable video -> nonzero, no file | pass. 7/7 chapters on 3rWSvrFahIY; `aaaaaaaaaaa` exits 1 |
+| C2 | frames named by seconds, verified independently | pass. Re-extracted frame at named second: pixel diff 0.9 and 2.4 vs 47 and 25 at +30s. One frame differed because the scene cut fell inside that second |
+| C3 | 60-min talk in <=12 sheet reads | pass. 77-min talk = 11 sheets |
+| C4 | article -> clean markdown | pass. trafilatura: 0 link-only lines of 53 |
+| C5 | pdf -> page markers + images | pass. 33 pages, 5 images |
+| C6 | client-rendered page | script fails as predicted; a logged-in browser tool covers it |
+| C7 | loud failure, never empty output | pass after fix. trafilatura returns "" with exit 0 on paywalls; the script guards it |
+| C8 | triggers on link prompts, not on others | pass. 3/3 positive fired, 0/3 negative |
+| C9 | cheaper than no skill | **mixed, see below** |
+| ASR | captions missing (reels, shorts) | pass on accuracy: mlx-whisper large-v3-turbo transcribed the captioned clip correctly, ~40s for 167s audio after a one-time model download. The no-caption test clip turned out to be music only and Whisper hallucinated "Thank you." on it, so the script now reports the word count and the self-check covers the path, not accuracy |
+
+## Vendors tested (adopt per criterion)
+
+| candidate | verdict |
+|---|---|
+| trafilatura | adopted for articles. 1.6s, no nav boilerplate |
+| markitdown 0.1.7 | rejected. 21s on the same article, keeps nav/footer; PDF output 3.5x longer, no images |
+| pymupdf4llm | adopted for PDF. page-chunked, images out |
+| yt-dlp via `uv tool` with curl_cffi | adopted. brew build has no impersonation targets |
+| steipete/summarize 0.21 | rejected. Printed nothing, exit 0 on the test video (silent empty) |
+| claude-real-video | rejected. 2 min for a 3-min clip, every caption line tripled, 13 sheets for 3 min, no chapters, writes ~/.crv/memory.db unasked |
+| mlx-whisper | adopted for no-caption media (Apple Silicon) |
+| browser tool already in the harness | adopted for JS/login pages instead of adding Playwright |
+
+## C9: with vs without the skill (claude -p, Fable 5.1, same prompts)
+
+| task | with skill | without |
+|---|---|---|
+| chapters + 3-line summary | $0.91, 39s | $0.32, 16s. One yt-dlp metadata call; summary from description only |
+| paper in 5 bullets (arXiv PDF) | $0.87, read the PDF | $0.32. WebFetch declined, **answered from memory** |
+| article recommendation | $0.55 | $0.45, WebFetch worked |
+| timestamped numbers from a 77-min talk | $0.85, 153s, correct | $0.83, 58s, correct. Subs + targeted ffmpeg frames |
+
+Reading: this model already knows yt-dlp and ffmpeg, and YouTube did not 403 during the test, so on
+shallow tasks the skill only adds overhead. The measurable wins are (1) the PDF case, where
+the no-skill run silently fell back to training data, (2) a fixed output layout that parallel
+subagents can share, (3) the no-captions path, which the baseline has no answer for.
+The deep-talk result changed the design: whole-video frame extraction moved from default to
+`--frames`, and SKILL.md now tells the agent to take the cheapest path.
+
+## Platforms (all through the same `video` command)
+
+| platform | result |
+|---|---|
+| YouTube 3-min clip, captions | pass, 32 frames with the density floor |
+| YouTube 77-min talk | pass, 7 chapters, transcript only in 16s |
+| Instagram reel Dc_acmis1BM | pass, 9s end to end, 126 words by speech-to-text, 6 frames. Nonexistent reel exits 1 |
+| X post 1945976064758730965 | pass, 38s, 381 words from X captions, 13 frames |
+| TikTok | untested: no public video URL reachable without a known handle |
+
+The reel exposed a gap: scene detection alone gave 1 frame for a motion-graphics reel. Fix was
+inside the ffmpeg select expression, one frame at least every 10s, no extra branch.
+
+## Second harness: pi 0.83 + local Qwen (qwen3.8-27b on llama.cpp over Tailscale, 32k context)
+
+Setup: provider entry in `~/.pi/agent/models.json` (baseUrl, api openai-completions, dummy apiKey,
+compat supportsDeveloperRole=false), skill passed unchanged with `--skill <path-to-skill-dir>`.
+Same six trigger prompts and three no-skill baselines as the Claude Code test. One GPU slot, so runs were sequential.
+
+| prompt | with skill | without skill |
+|---|---|---|
+| chapters + summary, 77-min talk | read SKILL.md, ran script, 4 tools, 51s, correct | 19 shell calls, 551s, hand-wrote a VTT parser, grepped transcript 15x for speaker changes, **blew the 32k context, no answer** |
+| arXiv PDF in 5 bullets | 9 tools, 58s, correct | 2 calls (curl + pdftotext), 27s, correct |
+| article recommendation | 3 tools, 26s, correct | 2 calls (curl + regex strip), 24s, correct |
+| 3 non-link prompts | skill not used, 5-7s each | n/a |
+
+Reading: trigger behaviour is identical to Claude Code (3/3 fire, 0/3 false positives) with a 27B
+local model. The skill's value on a small model is not speed on easy tasks, it is the video case:
+the model did not know chapters are in yt-dlp metadata and could not fit its own exploration in
+32k tokens. The skill turns that into 4 tool calls. No extra harness work was needed: pi already
+implements the Agent Skills spec and reads Claude Code skill folders.
+
+Operational notes: llama.cpp keeps generating after a client is killed, so a killed run blocks the
+single slot for minutes; poll `/slots` before each run. pi buffers `--mode json` output when piped
+and loses it if killed, so give runs a generous cap rather than a tight one.
+
+## Not covered yet
+- TikTok (needs a video URL).
+- Linux speech-to-text (mlx-whisper is Apple Silicon only).

@@ -1,0 +1,82 @@
+# ingest-url
+
+An [Agent Skill](https://agentskills.io) that turns a URL into files an agent can read.
+Works in Claude Code, pi, and any agent that implements the Agent Skills spec.
+
+| source | what the agent gets |
+|---|---|
+| YouTube, Instagram reels, X, TikTok, any site yt-dlp supports | `text.md` with one `[mm:ss]` line per minute and `CHAPTER` lines; captions when the platform has them, on-device speech-to-text when it does not. Optional scene frames named by second, plus contact sheets so a 1-hour talk is 10 images to skim |
+| articles, blog posts | clean markdown with title and date, no navigation boilerplate |
+| PDFs, arXiv | markdown with `--- page N ---` markers and extracted figures |
+
+Every path fails loudly: nonzero exit with a reason, never an empty file. An agent that gets
+empty text will summarize from memory and call it done. This script does not let it.
+
+## Why
+
+Agents already know yt-dlp and ffmpeg. What they rediscover every time, at a cost of a dozen
+tool calls, is the set of things that go wrong:
+
+- YouTube returns 403 without browser cookies and Chrome impersonation.
+- ffmpeg's `-frame_pts` names frames in the stream timebase, not seconds; the only reliable clock is `showinfo`.
+- Many ffmpeg builds lack `drawtext`, so labelled contact sheets need Pillow.
+- YouTube captions repeat every line two or three times as rolling cues.
+- Article extractors return an empty string with exit 0 on paywalls.
+- Scene detection alone yields one frame for a motion-graphics reel.
+- Chapters are in the video metadata; a small model that does not know this will grep a transcript until it runs out of context.
+
+The skill is those fixes, once, plus instructions on which path is cheapest for which question.
+The measurements behind each decision, including a with/without-skill comparison on Claude Code
+and on pi with a local 27B model, are in [skills/ingest-url/EVAL.md](skills/ingest-url/EVAL.md).
+
+## Install
+
+```bash
+# Claude Code
+claude plugin marketplace add 123Satyajeet123/ingest-url
+/plugin install ingest-url
+
+# Any Agent Skills client (Cursor, Copilot, Gemini CLI, Codex, ...)
+npx skills add 123Satyajeet123/ingest-url
+
+# pi
+pi install git:github.com/123Satyajeet123/ingest-url
+```
+
+Or copy `skills/ingest-url` into your agent's skills directory.
+
+## Requirements
+
+`uv`, `ffmpeg`, and a browser whose cookies yt-dlp can read (Chrome by default; set
+`INGEST_BROWSER=firefox` or similar to change). Python dependencies install themselves on first
+run from the script's inline metadata. Speech-to-text uses mlx-whisper and needs Apple Silicon;
+elsewhere the script says so and names a fallback.
+
+## Output layout
+
+```
+<out>/
+  text.md          transcript with CHAPTER and [mm:ss] lines, or article/PDF markdown
+  manifest.json    id, title, channel, date, duration, chapters, transcript source, word count
+  frames/00083.jpg scene frame at 1:23 (with --frames)
+  sheets/00.jpg    48 labelled frames per sheet (with --frames)
+  images/          figures extracted from a PDF
+```
+
+## Self-check
+
+```bash
+python3 skills/ingest-url/scripts/test_ingest.py
+```
+
+Runs every path in both directions against live URLs: a working link must yield text, a
+paywalled or missing one must fail. About a minute.
+
+## Limits
+
+TikTok is untested. Speech-to-text is Apple Silicon only. The script reads English captions;
+other languages fall through to speech-to-text.
+
+## License
+
+MIT
