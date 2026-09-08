@@ -1,6 +1,10 @@
 # ingest-url
 
-An [Agent Skill](https://agentskills.io) that turns a URL into files an agent can read, and finds URLs worth reading.
+Your agent cannot watch a video. Paste a YouTube link into Claude Code and WebFetch returns the page footer. Paste a reel and it gets the caption. Paste an arXiv PDF and it answers from memory. So people transcribe elsewhere and paste the text back in.
+
+ingest-url is an [Agent Skill](https://agentskills.io) that gives the agent the talk itself: a timestamped transcript with chapters, frames when the speaker points at a slide, the paper's LaTeX, the thread's comments. One command, cached, and it fails out loud instead of returning nothing.
+
+![demo](docs/demo.gif)
 
 | input | output |
 |---|---|
@@ -50,9 +54,5 @@ Same trigger behaviour on pi with a local 27B Qwen, where the unaided model ran 
 ```bash
 python3 skills/ingest-url/scripts/test_ingest.py   # every path, both directions, live URLs, about a minute
 ```
-
-## Limits
-
-Windows untested. TikTok untested (blocked on the author's network). X and Instagram have no free search; use a logged-in browser.
 
 MIT
