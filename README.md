@@ -12,6 +12,7 @@ Works in Claude Code, pi, and any agent that implements the Agent Skills spec.
 | YouTube, Instagram reels, X, TikTok, any site yt-dlp supports | `text.md` with one `[mm:ss]` line per minute and `CHAPTER` lines; captions when the platform has them, on-device speech-to-text when it does not. Optional scene frames named by second, plus contact sheets so a 1-hour talk is 10 images to skim |
 | articles, blog posts | clean markdown with title and date, no navigation boilerplate |
 | PDFs, arXiv | arXiv: the LaTeX source, so equations and tables survive; other PDFs: markdown with `--- page N ---` markers and extracted figures |
+| a topic, not a URL | `find` returns candidate URLs from YouTube, arXiv, Semantic Scholar or OpenAlex, Hacker News, and GitHub, one block per platform, keyless, in about two seconds |
 
 Every path fails loudly: nonzero exit with a reason, never an empty file. An agent that gets
 empty text will summarize from memory and call it done. This script does not let it.
@@ -28,6 +29,7 @@ tool calls, is the set of things that go wrong:
 - Article extractors return an empty string with exit 0 on paywalls.
 - Scene detection alone yields one frame for a motion-graphics reel.
 - Chapters are in the video metadata; a small model that does not know this will grep a transcript until it runs out of context.
+- Platform search is one HTTP call each and hard to rank across platforms; the multi-source research skill with the most stars returned zero YouTube results for queries where a one-line yt-dlp search found the exact talk.
 
 The skill is those fixes, once, plus instructions on which path is cheapest for which question.
 The measurements behind each decision, including a with/without-skill comparison on Claude Code
@@ -104,6 +106,16 @@ evals/run.py --runs 2                # same cases, same with/without ablation, w
 Measured result on Claude Code: the skill wins where the answer lives in audio or on a slide
 (1.00 with, 0.50 to 0.75 without) and breaks even on tasks the model already knows how to do
 from metadata. Numbers and the description A/B are in EVAL.md.
+
+## Finding what to ingest
+
+```bash
+ingest.py find "self-play with self-guidance theorem proving" --sources youtube,arxiv
+```
+
+Per-platform lists with date, engagement signal, title, and URL. No merged ranking: views,
+citations, and points are not comparable, so the agent ranks. X and Instagram have no free search
+and are left to a logged-in browser on purpose.
 
 ## Limits
 

@@ -125,6 +125,22 @@ Reading:
 | content-addressed cache, default output dir | second call 0.04s vs 6.8s; asking for `--frames` after a transcript-only run re-ingests instead of serving the cache |
 | TikTok | not testable here: TLS handshake to tiktok.com fails from plain curl too (blocked in India). yt-dlp has the extractor |
 
+## Search: vendor test and the `find` subcommand (1.4.0)
+
+Need, from the session mining: about 5 explicit "search X and YouTube, then watch" prompts and 69
+strict discovery prompts in two months; general web discovery already served by the harness's
+WebSearch (873 calls). Criteria S1-S8 were written before testing (search-eval/CRITERIA.md).
+
+| candidate | verdict |
+|---|---|
+| mvanhorn/last30days-skill (61.6k stars, 59 MB, 2307-line SKILL.md) | rejected. Keyless, `--days 3650`: 0 YouTube videos on both test queries where `yt-dlp ytsearch` returned the exact talks in 1s; paper hits were adjacent (AlphaZero, STP) not the target paper arXiv's own relevance search ranks first; 20-23s per query |
+| per-platform skills (hermes youtube-content, deepmind arxiv, vm0 hackernews) | not adopted: three trigger surfaces for one chain |
+| nothing (agent types the one-liners) | seen in logs; loses on consistency and parallelism |
+| own `find` subcommand | adopted. 5 platforms in parallel, 1.7s, per-platform blocks, a failed platform reports its error and the rest still answer |
+
+Known weak spots: Semantic Scholar's shared pool throttles unpredictably (OpenAlex fallback
+ranks poorly); yt-dlp flat search omits upload dates; no free X or Instagram search exists.
+
 ## Not covered yet
 - Windows.
 - TikTok end to end (network-blocked where this was built).

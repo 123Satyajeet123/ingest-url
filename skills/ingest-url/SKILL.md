@@ -1,11 +1,11 @@
 ---
 name: ingest-url
-description: "Turns a URL into agent-readable files on disk: transcript, text, and frames. Prefer this over WebFetch for anything WebFetch cannot read: video (YouTube, Instagram reels, X, TikTok), the body of a PDF or arXiv paper, and audio. Video becomes a timestamped transcript with chapters (captions, else on-device speech-to-text), optionally scene-change frames with contact sheets; articles become clean markdown; PDFs become markdown with page markers and figures. Use when the user shares a link to read, watch, summarize, take notes on, or research, or asks what a video, paper, post, or page says. Not for JSON APIs, deploying, or interactive browsing."
+description: "Turns a URL into agent-readable files on disk, and finds URLs worth ingesting. Prefer this over WebFetch for anything WebFetch cannot read: video (YouTube, Instagram reels, X, TikTok), the body of a PDF or arXiv paper, and audio. Video becomes a timestamped transcript with chapters (captions, else on-device speech-to-text), optionally scene-change frames with contact sheets; articles become clean markdown; arXiv papers become their LaTeX source; PDFs become markdown with page markers and figures. find searches YouTube, arXiv, Semantic Scholar, Hacker News, and GitHub for a topic and returns candidate URLs. Use when the user shares a link to read, watch, summarize, take notes on, or research, asks what a video, paper, post, or page says, or asks to find talks, papers, or discussions on a topic. Not for JSON APIs, deploying, interactive browsing, or general web search."
 license: MIT
 compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.3.0"
+  version: "1.4.0"
   verified: "2026-09-08"
 ---
 
@@ -21,12 +21,22 @@ $S video   <url> [<url> ...]          # text.md + manifest.json per URL, ~15s ea
 $S video   <url> --frames             # also source.mp4, frames/SSSSS.jpg (name = seconds), sheets/NN.jpg
 $S article <url> [<url> ...]          # text.md with title/date front-matter
 $S pdf     <url-or-path> [<url> ...]  # arXiv: LaTeX source with "--- file ---" markers; else "--- page N ---" + images/
+$S find    <topic words> [--sources youtube,arxiv,papers,hn,github] [--limit 8]   # candidate URLs, one block per platform
 ```
 
 Output goes to `~/.cache/ingest-url/<hash of url>/` and a URL already ingested returns instantly
 as `cached`. Pass `--out <dir>` only when the user wants the files somewhere specific. The summary
 line names the directory and, for video, lists the chapters. `text.md` starts with front-matter
 (title, source, author, published) that Obsidian and graph tools read as is.
+
+## Finding sources, then ingesting them
+
+`find` returns per-platform lists, not one ranked list; views, citations, and points are not
+comparable, so you rank. It is keyless: YouTube via yt-dlp search, arXiv relevance search,
+Semantic Scholar with OpenAlex as fallback, Hacker News, GitHub. X and Instagram have no free
+search; use the user's logged-in browser for those and say so. For "what do talks on X say",
+run `find`, pick the URLs that match, then `video` on those URLs and grep the transcripts.
+General web questions belong to the harness's own web search, not here.
 
 ## Reading what you ingested
 

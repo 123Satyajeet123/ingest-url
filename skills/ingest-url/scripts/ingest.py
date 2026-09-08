@@ -16,10 +16,13 @@ video    text.md ([mm:ss] transcript lines, CHAPTER lines) + manifest.json. Capt
 article  text.md with title/date front-matter.
 pdf      text.md with "--- page N ---" markers + images/. Accepts a URL or a local path.
          arXiv URLs use the LaTeX source when available (equations and tables survive), else the PDF.
+find     QUERY -> candidate URLs from YouTube, arXiv, Semantic Scholar/OpenAlex, Hacker News, GitHub, one line each:
+         platform | date | signal | title | url. Per-platform lists, no merged score; ranking is the reader's job.
 Several URLs may be given at once; each gets its own directory. text.md starts with Obsidian-compatible
 front-matter (title, source, author, published, created) so vaults and graph tools read it unchanged.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, tarfile, time, urllib.error, urllib.request
+import argparse, hashlib, json, os, re, subprocess, sys, tarfile, time, urllib.error, urllib.parse, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 CACHE_ROOT = Path(os.environ.get("INGEST_CACHE", Path.home() / ".cache/ingest-url"))
@@ -307,13 +310,92 @@ def pdf(source, out):
     print(f"{out}: {len(pages)} pages, {images} images. Next: read {out / 'text.md'}; grep '^--- page\\|^#' for the map")
 
 
+# ---------- find ----------
+
+def get_json(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "ingest-url (https://github.com/123Satyajeet123/ingest-url)"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read())
+
+
+def find_youtube(query, limit):
+    proc = subprocess.run([sys.executable, "-m", "yt_dlp", f"ytsearch{limit}:{query}", "--flat-playlist", "--no-warnings",
+                           "--print", "%(upload_date,release_date|)s\t%(view_count|0)s views\t%(duration>%M:%S|)s\t%(title)s\t%(url)s"],
+                          capture_output=True, text=True)
+    return [line.split("\t") for line in proc.stdout.splitlines() if line.count("\t") == 4]
+
+
+def find_arxiv(query, limit):
+    q = urllib.parse.quote(f"all:{query}")
+    xml = urllib.request.urlopen(f"https://export.arxiv.org/api/query?search_query={q}&sortBy=relevance&max_results={limit}", timeout=20).read().decode()
+    rows = []
+    for entry in xml.split("<entry>")[1:]:
+        pick = lambda tag: " ".join(re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", entry, re.S)[1].split())
+        rows.append([pick("published")[:10], "", "", pick("title"), pick("id").replace("/abs/", "/pdf/")])
+    return rows
+
+
+def find_papers(query, limit):
+    """Semantic Scholar when its shared pool lets us in, OpenAlex otherwise; both keyless."""
+    try:
+        data = get_json("https://api.semanticscholar.org/graph/v1/paper/search?" + urllib.parse.urlencode(
+            {"query": query, "limit": limit, "fields": "title,year,citationCount,externalIds,openAccessPdf"}))
+        return [[str(p.get("year") or ""), f"{p.get('citationCount', 0)} citations", "", p["title"],
+                 f"https://arxiv.org/pdf/{p['externalIds']['ArXiv']}" if (p.get("externalIds") or {}).get("ArXiv")
+                 else (p.get("openAccessPdf") or {}).get("url") or f"https://www.semanticscholar.org/paper/{p['paperId']}"]
+                for p in data.get("data", [])]
+    except (urllib.error.URLError, OSError, KeyError):
+        data = get_json("https://api.openalex.org/works?" + urllib.parse.urlencode(
+            {"search": query, "per-page": limit, "select": "title,publication_year,cited_by_count,open_access,doi"}))
+        return [[str(w.get("publication_year") or ""), f"{w.get('cited_by_count', 0)} citations", "", w["title"],
+                 (w.get("open_access") or {}).get("oa_url") or w.get("doi") or ""] for w in data.get("results", [])]
+
+
+def find_hn(query, limit):
+    data = get_json("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode({"query": query, "tags": "story", "hitsPerPage": limit}))
+    return [[h["created_at"][:10], f"{h.get('points', 0)} points, {h.get('num_comments', 0)} comments", "", h["title"],
+             h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}"] for h in data.get("hits", [])]
+
+
+def find_github(query, limit):
+    data = get_json("https://api.github.com/search/repositories?" + urllib.parse.urlencode({"q": query, "sort": "stars", "per_page": limit}))
+    return [[r["pushed_at"][:10], f"{r['stargazers_count']} stars", "", r["full_name"] + (f": {r['description']}" if r.get("description") else ""), r["html_url"]]
+            for r in data.get("items", [])]
+
+
+FINDERS = {"youtube": find_youtube, "arxiv": find_arxiv, "papers": find_papers, "hn": find_hn, "github": find_github}
+
+
+def find(query, sources, limit):
+    """One block per platform. A platform that fails prints why and the others still answer."""
+    def run(name):
+        try:
+            return name, FINDERS[name](query, limit), None
+        except Exception as error:   # noqa: BLE001 - every backend has its own failure zoo; the reader needs the name, not a crash
+            return name, [], f"{type(error).__name__}: {str(error)[:120]}"
+    with ThreadPoolExecutor(len(sources)) as pool:
+        for name, rows, error in pool.map(run, sources):
+            print(f"## {name}" + (f" (failed: {error})" if error else f" ({len(rows)})"))
+            for date, signal, extra, title, url in rows:
+                print(f"{date or '----------':10} | {signal or extra:>24} | {title[:90]} | {url}")
+            print()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("kind", choices=("video", "article", "pdf"))
-    parser.add_argument("urls", nargs="+", metavar="URL")
+    parser.add_argument("kind", choices=("video", "article", "pdf", "find"))
+    parser.add_argument("urls", nargs="+", metavar="URL|QUERY")
+    parser.add_argument("--sources", default=",".join(FINDERS), help="find only: comma list of " + ",".join(FINDERS))
+    parser.add_argument("--limit", type=int, default=8, help="find only: results per platform")
     parser.add_argument("--out", type=Path, help="output directory (single URL only); default: <cache root>/<12-char hash of url>")
     parser.add_argument("--frames", action="store_true", help="video only: extract scene frames and contact sheets")
     a = parser.parse_args()
+    if a.kind == "find":
+        unknown = set(a.sources.split(",")) - set(FINDERS)
+        if unknown:
+            parser.error(f"unknown sources: {', '.join(sorted(unknown))}")
+        find(" ".join(a.urls), a.sources.split(","), a.limit)
+        sys.exit(0)
     if a.frames and a.kind != "video":
         parser.error("--frames applies to video only")
     if a.out and len(a.urls) > 1:

@@ -63,6 +63,12 @@ r = run("pdf", "https://proceedings.neurips.cc/paper_files/paper/2017/file/3f5ee
 assert r.returncode == 0, r.stderr
 assert (tmp / "pdf/text.md").read_text().count("--- page ") >= 5, "non-arXiv PDF must take the page path"
 
+r = run("find", "Scaling Self-Play with Self-Guidance", "--sources", "youtube,arxiv,hn", "--limit", "3")
+assert r.returncode == 0, r.stderr
+assert "arxiv.org/pdf/2604.20209" in r.stdout and "youtube.com/watch" in r.stdout, "find must surface the paper and its talks"
+assert "## hn" in r.stdout, "a platform with no hits still reports itself"
+assert run("find", "x", "--sources", "tiktok").returncode != 0, "unknown source must be refused"
+
 assert run("bogus", ARTICLE).returncode != 0
 assert run("article", ARTICLE, PDF, "--out", tmp / "x").returncode != 0, "--out with several URLs must be refused"
 
