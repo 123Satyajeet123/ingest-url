@@ -5,7 +5,7 @@ license: MIT
 compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.5.0"
+  version: "1.5.1"
   verified: "2026-09-08"
 ---
 
@@ -31,16 +31,15 @@ line names the directory and, for video, lists the chapters. `text.md` starts wi
 
 ## Finding sources, then ingesting them
 
-`find` returns per-platform lists, not one ranked list; views, citations, and points are not
-comparable, so you rank. It is keyless: YouTube via yt-dlp search, arXiv relevance search,
-Semantic Scholar with OpenAlex as fallback, Hacker News, GitHub. X and Instagram have no free
-search; use the user's logged-in browser for those and say so. For "what do talks on X say" or
+`find` returns one list per platform; views, citations, and points are not comparable, so you
+rank. Keyless: yt-dlp search, arXiv, Semantic Scholar with OpenAlex fallback, Hacker News, GitHub.
+X and Instagram have no free search; use the user's logged-in browser and say so. For "what do talks on X say" or
 "what are people saying about X": run `find`, pick the two or three hits that match best, ingest
 those (`video` for talks, `article` for Hacker News threads, which come back as the full comment
-tree), and answer from them. Widen to more sources only if the user asks or the first pass
-disagrees with itself. Do not fan out subagents over every hit; one pass over three sources
-answers most discovery questions for about a dollar, a fan-out costs seven and often never
-finishes synthesizing. General web questions belong to the harness's own web search, not here.
+tree), and answer from them. Widen only if the user asks or the first pass disagrees
+with itself. Do not fan out subagents over every hit: measured, one pass over three sources
+costs about $1, a fan-out $7 and it hit the turn cap. General web questions belong to the
+harness's own web search.
 
 ## Reading what you ingested
 

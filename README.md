@@ -1,128 +1,58 @@
 # ingest-url
 
-An [Agent Skill](https://agentskills.io) that turns a video, reel, X post, PDF, or article into
-files an agent can grep and cite by timestamp. Captions first, on-device speech-to-text second,
-frames last, and a nonzero exit instead of a made-up summary. Ingested URLs are cached on disk,
-so the second agent, session, or subagent that needs the same link pays nothing. Ships with
-with/without evals that show where it pays for itself and where it does not.
-Works in Claude Code, pi, and any agent that implements the Agent Skills spec.
+An [Agent Skill](https://agentskills.io) that turns a URL into files an agent can read, and finds URLs worth reading.
 
-| source | what the agent gets |
+| input | output |
 |---|---|
-| YouTube, Instagram reels, X, TikTok, any site yt-dlp supports | `text.md` with one `[mm:ss]` line per minute and `CHAPTER` lines; captions when the platform has them, on-device speech-to-text when it does not. Optional scene frames named by second, plus contact sheets so a 1-hour talk is 10 images to skim |
-| articles, blog posts | clean markdown with title and date, no navigation boilerplate |
-| PDFs, arXiv | arXiv: the LaTeX source, so equations and tables survive; other PDFs: markdown with `--- page N ---` markers and extracted figures |
-| a topic, not a URL | `find` returns candidate URLs from YouTube, arXiv, Semantic Scholar or OpenAlex, Hacker News, and GitHub, one block per platform, keyless, in about two seconds |
+| YouTube, Instagram reel, X post, any yt-dlp site | `text.md`: chapters, one `[mm:ss]` line per minute. Captions in the video's language, else on-device speech-to-text. `--frames` adds scene frames named by second and contact sheets |
+| article, blog post | markdown, no navigation boilerplate |
+| Hacker News item | the comment tree |
+| arXiv | the LaTeX source |
+| other PDF | markdown with `--- page N ---` markers and extracted figures |
+| a topic | `find`: URLs from YouTube, arXiv, Semantic Scholar or OpenAlex, Hacker News, GitHub, one block per platform |
 
-Every path fails loudly: nonzero exit with a reason, never an empty file. An agent that gets
-empty text will summarize from memory and call it done. This script does not let it.
-
-## Why
-
-Agents already know yt-dlp and ffmpeg. What they rediscover every time, at a cost of a dozen
-tool calls, is the set of things that go wrong:
-
-- YouTube returns 403 without browser cookies and Chrome impersonation.
-- ffmpeg's `-frame_pts` names frames in the stream timebase, not seconds; the only reliable clock is `showinfo`.
-- Many ffmpeg builds lack `drawtext`, so labelled contact sheets need Pillow.
-- YouTube captions repeat every line two or three times as rolling cues.
-- Article extractors return an empty string with exit 0 on paywalls.
-- Scene detection alone yields one frame for a motion-graphics reel.
-- Chapters are in the video metadata; a small model that does not know this will grep a transcript until it runs out of context.
-- Platform search is one HTTP call each and hard to rank across platforms; the multi-source research skill with the most stars returned zero YouTube results for queries where a one-line yt-dlp search found the exact talk.
-
-The skill is those fixes, once, plus instructions on which path is cheapest for which question.
-The measurements behind each decision, including a with/without-skill comparison on Claude Code
-and on pi with a local 27B model, are in [skills/ingest-url/EVAL.md](skills/ingest-url/EVAL.md).
+Every path exits nonzero with a reason instead of writing an empty file. Output is cached under `~/.cache/ingest-url/<hash>/`; a repeat URL costs 40 ms. `text.md` opens with Obsidian Web Clipper front-matter.
 
 ## Install
 
 ```bash
-# Claude Code
-claude plugin marketplace add 123Satyajeet123/ingest-url
-/plugin install ingest-url
-
-# Any Agent Skills client (Cursor, Copilot, Gemini CLI, Codex, ...)
-npx skills add 123Satyajeet123/ingest-url
-
-# pi
-pi install git:github.com/123Satyajeet123/ingest-url
+claude plugin marketplace add 123Satyajeet123/ingest-url && /plugin install ingest-url   # Claude Code
+npx skills add 123Satyajeet123/ingest-url                                               # any Agent Skills client
+pi install git:github.com/123Satyajeet123/ingest-url                                    # pi
 ```
 
-Or copy `skills/ingest-url` into your agent's skills directory.
+Needs `uv`, `ffmpeg`, and a browser whose cookies yt-dlp can read (`INGEST_BROWSER`, default chrome). Python dependencies, including the speech-to-text backend for the machine (mlx-whisper on Apple Silicon, faster-whisper elsewhere), install on first run.
 
-## Requirements
-
-`uv`, `ffmpeg`, and a browser whose cookies yt-dlp can read (Chrome by default; set
-`INGEST_BROWSER=firefox` or similar to change). Python dependencies install themselves on first
-run from the script's inline metadata, including the right speech-to-text backend for the
-machine: mlx-whisper on Apple Silicon, faster-whisper (CPU or CUDA) everywhere else. Both use
-Whisper large-v3-turbo and produced identical transcripts in testing. `INGEST_STT` forces one.
-
-## Output layout
-
-Output lands in `~/.cache/ingest-url/<hash of url>/` unless `--out` is given, and a URL already
-ingested is served from there in milliseconds. Several URLs can be passed in one call. `INGEST_CACHE`
-moves the root. The front-matter uses Obsidian Web Clipper's field names, so a vault or a graph
-tool indexes the files with no glue.
-
-```
-<out>/
-  text.md          front-matter (title, source, author, published), then transcript with CHAPTER and [mm:ss] lines, or article/PDF markdown
-  manifest.json    id, title, channel, date, duration, chapters, language, transcript source, word count
-  frames/00083.jpg scene frame at 1:23 (with --frames)
-  sheets/00.jpg    48 labelled frames per sheet (with --frames)
-  images/          figures extracted from a PDF
-```
-
-## Self-check
+## Use
 
 ```bash
-python3 skills/ingest-url/scripts/test_ingest.py
+ingest.py video   <url> [<url> ...] [--frames]
+ingest.py article <url> [<url> ...]
+ingest.py pdf     <url-or-path> [<url> ...]
+ingest.py find    <topic words> [--sources youtube,arxiv,papers,hn,github] [--limit 8]
 ```
 
-Runs every path in both directions against live URLs: a working link must yield text, a
-paywalled or missing one must fail. About a minute.
+SKILL.md tells the agent which path is cheapest for which question and how to read the result: map first, grep a window for a fact, whole read for a summary, one frame when the speaker points at a slide.
 
-## Reading, not just fetching
+## Measured
 
-SKILL.md carries a short reading protocol: map first (chapters or section headings), grep and read
-a window for a targeted fact, whole read with quotes-first for a summary, one extracted frame when
-the speaker points at a slide, and never a number that is not grep-able in the source. Each step
-traces to a measured result, either published context-rot work or this skill's own eval.
+With and without the skill, two runs per cell, Claude Code, WebFetch allowed in both arms:
 
-## Eval
+| task | with | without |
+|---|---|---|
+| figure spoken inside a 77-min talk | 1.00 | 0.50 |
+| reel with no captions | 1.00 | 0.75 |
+| chapters of a talk | 1.00 | 1.00 |
+| number only in a PDF body | 1.00 | 1.00 |
 
-`evals/` holds five cases in the `claude plugin eval` format: a non-link task that must not
-trigger the skill, a number that exists only in a PDF body, a reel with no captions, a chapter
-list, and a figure spoken inside a 77-minute talk. Each has a skill-fired indicator, a regex on
-the ground truth, and a rubric graded by a judge model.
+Same trigger behaviour on pi with a local 27B Qwen, where the unaided model ran out of context on the chapter question. Details, vendor comparisons, and the eval runner are in `skills/ingest-url/EVAL.md` and `evals/`.
 
 ```bash
-claude plugin eval .                 # when enabled on your account
-evals/run.py --runs 2                # same cases, same with/without ablation, works today
+python3 skills/ingest-url/scripts/test_ingest.py   # every path, both directions, live URLs, about a minute
 ```
-
-Measured result on Claude Code: the skill wins where the answer lives in audio or on a slide
-(1.00 with, 0.50 to 0.75 without) and breaks even on tasks the model already knows how to do
-from metadata. Numbers and the description A/B are in EVAL.md.
-
-## Finding what to ingest
-
-```bash
-ingest.py find "self-play with self-guidance theorem proving" --sources youtube,arxiv
-```
-
-Per-platform lists with date, engagement signal, title, and URL. No merged ranking: views,
-citations, and points are not comparable, so the agent ranks. X and Instagram have no free search
-and are left to a logged-in browser on purpose.
 
 ## Limits
 
-Windows is untested. TikTok could not be tested from the author's network (the site is blocked
-in India at the TLS level), though yt-dlp supports it. Captions are taken in the video's own
-language with English as the fallback; speech-to-text detects the language itself.
-
-## License
+Windows untested. TikTok untested (blocked on the author's network). X and Instagram have no free search; use a logged-in browser.
 
 MIT

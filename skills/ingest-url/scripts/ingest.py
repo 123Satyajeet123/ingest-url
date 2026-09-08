@@ -7,19 +7,16 @@
 #   "faster-whisper; sys_platform != 'darwin' or platform_machine != 'arm64'",
 # ]
 # ///
-"""Turn one URL into agent-readable files in OUT. Fails loudly: nonzero exit with a reason, never an empty text.md.
-OUT defaults to a content-addressed directory under the cache root, so a URL ingested once is free the next time.
+"""URL -> agent-readable files. Nonzero exit with a reason, never an empty text.md.
+Output: ~/.cache/ingest-url/<hash>/ unless --out; a repeat URL is served from there.
 
-video    text.md ([mm:ss] transcript lines, CHAPTER lines) + manifest.json. Captions in the video's own language
-         (English as fallback), else on-device speech-to-text in any language.
-         --frames adds source.mp4, frames/<seconds>.jpg and sheets/NN.jpg contact sheets.
-article  text.md with title/date front-matter. Hacker News item URLs become the thread: story, then comments by score.
-pdf      text.md with "--- page N ---" markers + images/. Accepts a URL or a local path.
-         arXiv URLs use the LaTeX source when available (equations and tables survive), else the PDF.
-find     QUERY -> candidate URLs from YouTube, arXiv, Semantic Scholar/OpenAlex, Hacker News, GitHub, one line each:
-         platform | date | signal | title | url. Per-platform lists, no merged score; ranking is the reader's job.
-Several URLs may be given at once; each gets its own directory. text.md starts with Obsidian-compatible
-front-matter (title, source, author, published, created) so vaults and graph tools read it unchanged.
+video    text.md (front-matter, CHAPTER lines, one [mm:ss] line per minute) + manifest.json.
+         Captions in the video's language, English fallback, else on-device speech-to-text.
+         --frames adds source.mp4, frames/<seconds>.jpg, sheets/NN.jpg.
+article  text.md. Hacker News item URLs become the comment tree.
+pdf      arXiv: LaTeX source with "--- file ---" markers. Else "--- page N ---" markers + images/.
+find     one block per platform (YouTube, arXiv, Semantic Scholar/OpenAlex, Hacker News, GitHub):
+         date | signal | title | url. No merged ranking.
 """
 import argparse, hashlib, json, os, re, subprocess, sys, tarfile, time, urllib.error, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -30,7 +27,7 @@ COOKIE_BROWSER = os.environ.get("INGEST_BROWSER", "chrome")   # browser whose co
 STT_BACKEND = os.environ.get("INGEST_STT", "auto")              # auto | mlx-whisper | faster-whisper
 STT_MODEL = "large-v3-turbo"
 SCENE_THRESHOLD = 0.35
-FRAME_FLOOR_SECONDS = 10    # at least one frame every N seconds, so reels and slow fades still get sampled
+FRAME_FLOOR_SECONDS = 10    # scene detection alone gives one frame for a motion-graphics reel
 BUCKET_SECONDS = 60
 COLS, ROWS, TILE_W, TILE_H = 6, 8, 320, 180
 MEDIA_SUFFIXES = (".mp4", ".m4a", ".webm", ".mkv")
@@ -47,7 +44,6 @@ def write_nonempty(path, text):
 
 
 def cached(out, url, frames=False):
-    """True when OUT already holds a finished ingest of this URL with at least what was asked for."""
     manifest = out / "manifest.json"
     if not manifest.exists():
         return False
@@ -59,7 +55,7 @@ def cached(out, url, frames=False):
 
 
 def download(url, path):
-    """Fetch with a browser user agent; many hosts refuse Python's default one. Raises urllib.error.URLError."""
+    """Browser user agent: many hosts refuse Python's default one."""
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128 Safari/537.36"})
     with urllib.request.urlopen(request, timeout=60) as response:
         path.write_bytes(response.read())
@@ -79,7 +75,7 @@ def ytdlp(args):
 
 
 def vtt_segments(path):
-    """(seconds, text) per caption cue, with the rolling duplicates YouTube emits removed."""
+    """YouTube repeats each cue two or three times as it scrolls; keep the first."""
     segments, last, t = [], "", 0
     for line in path.read_text(encoding="utf8").split("\n"):
         m = re.match(r"(\d\d):(\d\d):(\d\d)\.\d+ --> ", line)
@@ -96,7 +92,6 @@ def vtt_segments(path):
 
 
 def stt_backend():
-    """mlx-whisper on Apple Silicon, faster-whisper (CPU or CUDA) everywhere else; INGEST_STT overrides."""
     for name in ([STT_BACKEND] if STT_BACKEND != "auto" else ["mlx-whisper", "faster-whisper"]):
         try:
             return name, __import__(name.replace("-", "_"))
@@ -106,7 +101,6 @@ def stt_backend():
 
 
 def asr_segments(media):
-    """(seconds, text, language) from on-device speech-to-text, for platforms without captions."""
     name, module = stt_backend()
     wav = media.with_suffix(".wav")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", str(wav)], check=True)
@@ -123,7 +117,7 @@ def asr_segments(media):
 
 
 def front_matter(title, source, author=None, published=None):
-    """Obsidian Web Clipper's field names, so vaults and graph tools index the file with no glue."""
+    """Field names follow Obsidian Web Clipper so vaults index the file unchanged."""
     fields = {"title": title, "source": source, "author": author, "published": published,
               "created": time.strftime("%Y-%m-%d")}
     return "---\n" + "".join(f"{k}: {json.dumps(v, ensure_ascii=False)}\n" for k, v in fields.items() if v) + "---\n\n"
@@ -143,8 +137,7 @@ def transcript_markdown(info, segments):
 
 
 def scene_frames(media, frames_dir):
-    """Scene-change frames named by their timestamp in seconds. showinfo's pts_time is the reliable clock;
-    -frame_pts numbers frames in the stream timebase, not seconds."""
+    """Frames named by second. showinfo's pts_time is the clock; -frame_pts counts in stream timebase."""
     frames_dir.mkdir(exist_ok=True)
     select = f"gt(scene,{SCENE_THRESHOLD})+isnan(prev_selected_t)+gte(t-prev_selected_t,{FRAME_FLOOR_SECONDS})"
     proc = subprocess.run(
@@ -190,7 +183,7 @@ def download_media(url, out, with_video):
 
 
 def caption_file(out, language):
-    """Best caption track: the video's own language first, English second, uploader tracks before auto-generated."""
+    """Video's own language before English, uploader tracks before auto-generated."""
     files = list(out.glob("source.*.vtt"))
     if not files:
         return None
@@ -235,7 +228,6 @@ def video(url, out, frames=False):
 # ---------- article ----------
 
 def hn_thread(item_id):
-    """A Hacker News discussion as markdown: story line, then top-level comments and replies, indented, by rank."""
     data = get_json(f"https://hn.algolia.com/api/v1/items/{item_id}")
     strip = lambda html: re.sub(r"<[^>]+>", "", (html or "").replace("<p>", "\n\n")).strip()
     lines = [front_matter(data.get("title") or f"HN {item_id}", f"https://news.ycombinator.com/item?id={item_id}",
@@ -258,9 +250,10 @@ def article(url, out):
     hn = re.search(r"news\.ycombinator\.com/item\?id=(\d+)", url)
     if hn:
         text = hn_thread(hn[1])
+        comments = text.count("\n- **")
         write_nonempty(out / "text.md", text)
-        (out / "manifest.json").write_text(json.dumps({"source_url": url, "comments": text.count("\n- **")}, indent=1))
-        print(f"{out}: HN thread, {text.count(chr(10) + '- **')} comments. Next: read {out / 'text.md'}")
+        (out / "manifest.json").write_text(json.dumps({"source_url": url, "comments": comments}, indent=1))
+        print(f"{out}: HN thread, {comments} comments. Next: read {out / 'text.md'}")
         return
     html = trafilatura.fetch_url(url)
     if not html:
@@ -279,7 +272,6 @@ def arxiv_id(url):
 
 
 def arxiv_metadata(aid):
-    """title, first author, published date from the arXiv API; empty on any failure."""
     try:
         xml = urllib.request.urlopen(f"https://export.arxiv.org/api/query?id_list={aid}", timeout=20).read().decode()
         entry = xml.split("<entry>", 1)[1]
@@ -290,7 +282,7 @@ def arxiv_metadata(aid):
 
 
 def arxiv_source(aid, out):
-    """The LaTeX source concatenated, main file first. Returns None when arXiv has no source (PDF-only submissions)."""
+    """None for PDF-only submissions."""
     tgz = out / "source.tar.gz"
     try:
         download(f"https://arxiv.org/src/{aid}", tgz)
@@ -343,9 +335,9 @@ def get_json(url):
 
 def find_youtube(query, limit):
     proc = subprocess.run([sys.executable, "-m", "yt_dlp", f"ytsearch{limit}:{query}", "--flat-playlist", "--no-warnings",
-                           "--print", "%(upload_date,release_date|)s\t%(view_count|0)s views\t%(duration>%M:%S|)s\t%(title)s\t%(url)s"],
+                           "--print", "%(upload_date,release_date|)s\t%(view_count|0)s views\t%(title)s\t%(url)s"],
                           capture_output=True, text=True)
-    return [line.split("\t") for line in proc.stdout.splitlines() if line.count("\t") == 4]
+    return [line.split("\t") for line in proc.stdout.splitlines() if line.count("\t") == 3]
 
 
 def find_arxiv(query, limit):
@@ -354,35 +346,35 @@ def find_arxiv(query, limit):
     rows = []
     for entry in xml.split("<entry>")[1:]:
         pick = lambda tag: " ".join(re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", entry, re.S)[1].split())
-        rows.append([pick("published")[:10], "", "", pick("title"), pick("id").replace("/abs/", "/pdf/")])
+        rows.append([pick("published")[:10], "", pick("title"), pick("id").replace("/abs/", "/pdf/")])
     return rows
 
 
 def find_papers(query, limit):
-    """Semantic Scholar when its shared pool lets us in, OpenAlex otherwise; both keyless."""
+    """Semantic Scholar throttles anonymous callers; OpenAlex is the fallback."""
     try:
         data = get_json("https://api.semanticscholar.org/graph/v1/paper/search?" + urllib.parse.urlencode(
             {"query": query, "limit": limit, "fields": "title,year,citationCount,externalIds,openAccessPdf"}))
-        return [[str(p.get("year") or ""), f"{p.get('citationCount', 0)} citations", "", p["title"],
+        return [[str(p.get("year") or ""), f"{p.get('citationCount', 0)} citations", p["title"],
                  f"https://arxiv.org/pdf/{p['externalIds']['ArXiv']}" if (p.get("externalIds") or {}).get("ArXiv")
                  else (p.get("openAccessPdf") or {}).get("url") or f"https://www.semanticscholar.org/paper/{p['paperId']}"]
                 for p in data.get("data", [])]
     except (urllib.error.URLError, OSError, KeyError):
         data = get_json("https://api.openalex.org/works?" + urllib.parse.urlencode(
             {"search": query, "per-page": limit, "select": "title,publication_year,cited_by_count,open_access,doi"}))
-        return [[str(w.get("publication_year") or ""), f"{w.get('cited_by_count', 0)} citations", "", w["title"],
+        return [[str(w.get("publication_year") or ""), f"{w.get('cited_by_count', 0)} citations", w["title"],
                  (w.get("open_access") or {}).get("oa_url") or w.get("doi") or ""] for w in data.get("results", [])]
 
 
 def find_hn(query, limit):
     data = get_json("https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode({"query": query, "tags": "story", "hitsPerPage": limit}))
-    return [[h["created_at"][:10], f"{h.get('points', 0)} points, {h.get('num_comments', 0)} comments", "", h["title"],
+    return [[h["created_at"][:10], f"{h.get('points', 0)} points, {h.get('num_comments', 0)} comments", h["title"],
              h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}"] for h in data.get("hits", [])]
 
 
 def find_github(query, limit):
     data = get_json("https://api.github.com/search/repositories?" + urllib.parse.urlencode({"q": query, "sort": "stars", "per_page": limit}))
-    return [[r["pushed_at"][:10], f"{r['stargazers_count']} stars", "", r["full_name"] + (f": {r['description']}" if r.get("description") else ""), r["html_url"]]
+    return [[r["pushed_at"][:10], f"{r['stargazers_count']} stars", r["full_name"] + (f": {r['description']}" if r.get("description") else ""), r["html_url"]]
             for r in data.get("items", [])]
 
 
@@ -390,17 +382,16 @@ FINDERS = {"youtube": find_youtube, "arxiv": find_arxiv, "papers": find_papers, 
 
 
 def find(query, sources, limit):
-    """One block per platform. A platform that fails prints why and the others still answer."""
     def run(name):
         try:
             return name, FINDERS[name](query, limit), None
-        except Exception as error:   # noqa: BLE001 - every backend has its own failure zoo; the reader needs the name, not a crash
+        except Exception as error:
             return name, [], f"{type(error).__name__}: {str(error)[:120]}"
     with ThreadPoolExecutor(len(sources)) as pool:
         for name, rows, error in pool.map(run, sources):
             print(f"## {name}" + (f" (failed: {error})" if error else f" ({len(rows)})"))
-            for date, signal, extra, title, url in rows:
-                print(f"{date or '----------':10} | {signal or extra:>24} | {title[:90]} | {url}")
+            for date, signal, title, url in rows:
+                print(f"{date or '----------':10} | {signal:>24} | {title[:90]} | {url}")
             print()
 
 

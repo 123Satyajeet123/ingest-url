@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-SKILL_LINK = Path.home() / ".claude/skills/ingest-url"   # moved out of the skills dir for the whole run so both arms start clean
+SKILL_LINK = Path.home() / ".claude/skills/ingest-url"   # moved out during the run; a renamed dir inside is still discovered
 TOOLS = "Bash,Read,Glob,Grep,Skill,WebFetch,ToolSearch"
 
 
