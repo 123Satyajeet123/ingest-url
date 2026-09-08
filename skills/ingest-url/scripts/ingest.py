@@ -15,8 +15,11 @@ video    text.md ([mm:ss] transcript lines, CHAPTER lines) + manifest.json. Capt
          --frames adds source.mp4, frames/<seconds>.jpg and sheets/NN.jpg contact sheets.
 article  text.md with title/date front-matter.
 pdf      text.md with "--- page N ---" markers + images/. Accepts a URL or a local path.
+         arXiv URLs use the LaTeX source when available (equations and tables survive), else the PDF.
+Several URLs may be given at once; each gets its own directory. text.md starts with Obsidian-compatible
+front-matter (title, source, author, published, created) so vaults and graph tools read it unchanged.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, urllib.request
+import argparse, hashlib, json, os, re, subprocess, sys, tarfile, time, urllib.error, urllib.request
 from pathlib import Path
 
 CACHE_ROOT = Path(os.environ.get("INGEST_CACHE", Path.home() / ".cache/ingest-url"))
@@ -50,6 +53,13 @@ def cached(out, url, frames=False):
         return False
     print(f"{out}: cached. Next: read {out / 'text.md'}" + (f", then {out / 'sheets'}" if m.get("frames_requested") else ""))
     return True
+
+
+def download(url, path):
+    """Fetch with a browser user agent; many hosts refuse Python's default one. Raises urllib.error.URLError."""
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128 Safari/537.36"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        path.write_bytes(response.read())
 
 
 def mmss(seconds):
@@ -109,11 +119,20 @@ def asr_segments(media):
     return [(t, text.strip()) for t, text in segments if text.strip()], language
 
 
+def front_matter(title, source, author=None, published=None):
+    """Obsidian Web Clipper's field names, so vaults and graph tools index the file with no glue."""
+    fields = {"title": title, "source": source, "author": author, "published": published,
+              "created": time.strftime("%Y-%m-%d")}
+    return "---\n" + "".join(f"{k}: {json.dumps(v, ensure_ascii=False)}\n" for k, v in fields.items() if v) + "---\n\n"
+
+
 def transcript_markdown(info, segments):
     buckets = {}
     for t, text in segments:
         buckets.setdefault(t // BUCKET_SECONDS * BUCKET_SECONDS, []).append(text)
-    lines = [f"# {info['title']}", ""]
+    date = info.get("upload_date")
+    lines = [front_matter(info["title"], info.get("webpage_url"), info.get("channel"),
+                          f"{date[:4]}-{date[4:6]}-{date[6:]}" if date else None) + f"# {info['title']}", ""]
     lines += [f"CHAPTER {mmss(c['start_time'])} {c['title']}" for c in info.get("chapters") or []]
     lines.append("")
     lines += [f"[{mmss(t)}] {' '.join(texts)}" for t, texts in sorted(buckets.items())]
@@ -206,6 +225,8 @@ def video(url, out, frames=False):
     print(f"{out}: {manifest.get('duration')}s, {manifest['words']} words from {manifest['transcript']} ({language}), "
           f"{len(manifest.get('chapters') or [])} chapters, {manifest.get('frames', 0)} frames, {manifest.get('sheets', 0)} sheets. "
           f"Next: read {out / 'text.md'}" + (f", then {out / 'sheets'}" if frames else ""))
+    for c in manifest.get("chapters") or []:
+        print(f"  {mmss(c['start_time'])} {c['title']}")
 
 
 # ---------- article ----------
@@ -226,32 +247,77 @@ def article(url, out):
 
 # ---------- pdf ----------
 
+def arxiv_id(url):
+    m = re.search(r"arxiv\.org/(?:abs|pdf|src|html)/(\d{4}\.\d{4,5}(?:v\d+)?)", url)
+    return m[1] if m else None
+
+
+def arxiv_metadata(aid):
+    """title, first author, published date from the arXiv API; empty on any failure."""
+    try:
+        xml = urllib.request.urlopen(f"https://export.arxiv.org/api/query?id_list={aid}", timeout=20).read().decode()
+        entry = xml.split("<entry>", 1)[1]
+        pick = lambda tag: re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", entry, re.S)
+        return {"title": " ".join(pick("title")[1].split()), "author": pick("name")[1], "published": pick("published")[1][:10]}
+    except (urllib.error.URLError, IndexError, TypeError, OSError):
+        return {}
+
+
+def arxiv_source(aid, out):
+    """The LaTeX source concatenated, main file first. Returns None when arXiv has no source (PDF-only submissions)."""
+    tgz = out / "source.tar.gz"
+    try:
+        download(f"https://arxiv.org/src/{aid}", tgz)
+        with tarfile.open(tgz) as tar:
+            tex = {m.name: tar.extractfile(m).read().decode("utf8", "replace") for m in tar.getmembers() if m.name.endswith(".tex")}
+    except (urllib.error.URLError, tarfile.TarError, OSError):
+        return None
+    if not tex:
+        return None
+    main = next((n for n, t in tex.items() if "\\begin{document}" in t), sorted(tex)[0])
+    rest = sorted(n for n in tex if n != main)
+    return "".join(f"\n\n--- file {n} ---\n\n{tex[n]}" for n in [main] + rest)
+
+
 def pdf(source, out):
     import pymupdf4llm
     if cached(out, source):
         return
     out.mkdir(parents=True, exist_ok=True)
+    aid = arxiv_id(source)
+    tex = arxiv_source(aid, out) if aid else None
+    if tex:
+        meta = arxiv_metadata(aid)
+        write_nonempty(out / "text.md", front_matter(meta.get("title", aid), f"https://arxiv.org/abs/{aid}", meta.get("author"), meta.get("published")) + tex)
+        (out / "manifest.json").write_text(json.dumps({"source_url": source, "format": "latex", "files": tex.count("--- file ")}, indent=1))
+        print(f"{out}: arXiv LaTeX source, {tex.count('--- file ')} files. Next: read {out / 'text.md'}; grep '^\\\\section' for the map")
+        return
     path = Path(source)
     if source.startswith("http"):
         path = out / "source.pdf"
-        urllib.request.urlretrieve(source, path)
+        try:
+            download(f"https://arxiv.org/pdf/{aid}" if aid else source, path)
+        except (urllib.error.URLError, OSError) as error:
+            die(f"download failed for {source}: {error}")
     pages = pymupdf4llm.to_markdown(str(path), page_chunks=True, write_images=True, image_path=str(out / "images"))
     text = "".join(f"\n\n--- page {n} ---\n\n{p['text']}" for n, p in enumerate(pages, 1))
-    write_nonempty(out / "text.md", text)
+    write_nonempty(out / "text.md", front_matter(path.stem, source) + text)
     images = len(list((out / "images").glob("*")))
-    (out / "manifest.json").write_text(json.dumps({"source_url": source, "pages": len(pages), "images": images}, indent=1))
-    print(f"{out}: {len(pages)} pages, {images} images. Next: read {out / 'text.md'}")
+    (out / "manifest.json").write_text(json.dumps({"source_url": source, "format": "pdf", "pages": len(pages), "images": images}, indent=1))
+    print(f"{out}: {len(pages)} pages, {images} images. Next: read {out / 'text.md'}; grep '^--- page\\|^#' for the map")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("kind", choices=("video", "article", "pdf"))
-    parser.add_argument("url")
-    parser.add_argument("out", type=Path, nargs="?", help="default: <cache root>/<12-char hash of url>")
+    parser.add_argument("urls", nargs="+", metavar="URL")
+    parser.add_argument("--out", type=Path, help="output directory (single URL only); default: <cache root>/<12-char hash of url>")
     parser.add_argument("--frames", action="store_true", help="video only: extract scene frames and contact sheets")
     a = parser.parse_args()
-    if a.out is None:
-        a.out = CACHE_ROOT / hashlib.sha1(a.url.encode()).hexdigest()[:12]
     if a.frames and a.kind != "video":
         parser.error("--frames applies to video only")
-    {"video": lambda: video(a.url, a.out, frames=a.frames), "article": lambda: article(a.url, a.out), "pdf": lambda: pdf(a.url, a.out)}[a.kind]()
+    if a.out and len(a.urls) > 1:
+        parser.error("--out takes a single URL")
+    run = {"video": lambda u, o: video(u, o, frames=a.frames), "article": article, "pdf": pdf}[a.kind]
+    for url in a.urls:
+        run(url, a.out or CACHE_ROOT / hashlib.sha1(url.encode()).hexdigest()[:12])

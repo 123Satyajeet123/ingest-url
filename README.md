@@ -11,7 +11,7 @@ Works in Claude Code, pi, and any agent that implements the Agent Skills spec.
 |---|---|
 | YouTube, Instagram reels, X, TikTok, any site yt-dlp supports | `text.md` with one `[mm:ss]` line per minute and `CHAPTER` lines; captions when the platform has them, on-device speech-to-text when it does not. Optional scene frames named by second, plus contact sheets so a 1-hour talk is 10 images to skim |
 | articles, blog posts | clean markdown with title and date, no navigation boilerplate |
-| PDFs, arXiv | markdown with `--- page N ---` markers and extracted figures |
+| PDFs, arXiv | arXiv: the LaTeX source, so equations and tables survive; other PDFs: markdown with `--- page N ---` markers and extracted figures |
 
 Every path fails loudly: nonzero exit with a reason, never an empty file. An agent that gets
 empty text will summarize from memory and call it done. This script does not let it.
@@ -59,12 +59,14 @@ Whisper large-v3-turbo and produced identical transcripts in testing. `INGEST_ST
 
 ## Output layout
 
-Output lands in `~/.cache/ingest-url/<hash of url>/` unless an output directory is given, and a
-URL already ingested is served from there in milliseconds. `INGEST_CACHE` moves the root.
+Output lands in `~/.cache/ingest-url/<hash of url>/` unless `--out` is given, and a URL already
+ingested is served from there in milliseconds. Several URLs can be passed in one call. `INGEST_CACHE`
+moves the root. The front-matter uses Obsidian Web Clipper's field names, so a vault or a graph
+tool indexes the files with no glue.
 
 ```
 <out>/
-  text.md          transcript with CHAPTER and [mm:ss] lines, or article/PDF markdown
+  text.md          front-matter (title, source, author, published), then transcript with CHAPTER and [mm:ss] lines, or article/PDF markdown
   manifest.json    id, title, channel, date, duration, chapters, language, transcript source, word count
   frames/00083.jpg scene frame at 1:23 (with --frames)
   sheets/00.jpg    48 labelled frames per sheet (with --frames)
@@ -79,6 +81,13 @@ python3 skills/ingest-url/scripts/test_ingest.py
 
 Runs every path in both directions against live URLs: a working link must yield text, a
 paywalled or missing one must fail. About a minute.
+
+## Reading, not just fetching
+
+SKILL.md carries a short reading protocol: map first (chapters or section headings), grep and read
+a window for a targeted fact, whole read with quotes-first for a summary, one extracted frame when
+the speaker points at a slide, and never a number that is not grep-able in the source. Each step
+traces to a measured result, either published context-rot work or this skill's own eval.
 
 ## Eval
 

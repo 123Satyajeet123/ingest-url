@@ -5,7 +5,7 @@ license: MIT
 compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.2.0"
+  version: "1.3.0"
   verified: "2026-09-08"
 ---
 
@@ -17,15 +17,30 @@ Paths below are relative to this skill's base directory.
 
 ```bash
 S=<base directory>/scripts/ingest.py
-$S video   <url>            # text.md + manifest.json, ~15s. Captions in the video's language, else speech-to-text
-$S video   <url> --frames   # also source.mp4, frames/SSSSS.jpg (name = seconds), sheets/NN.jpg
-$S article <url>            # text.md with title/date front-matter
-$S pdf     <url-or-path>    # text.md with "--- page N ---" markers, images/
+$S video   <url> [<url> ...]          # text.md + manifest.json per URL, ~15s each. Captions, else speech-to-text
+$S video   <url> --frames             # also source.mp4, frames/SSSSS.jpg (name = seconds), sheets/NN.jpg
+$S article <url> [<url> ...]          # text.md with title/date front-matter
+$S pdf     <url-or-path> [<url> ...]  # arXiv: LaTeX source with "--- file ---" markers; else "--- page N ---" + images/
 ```
 
 Output goes to `~/.cache/ingest-url/<hash of url>/` and a URL already ingested returns instantly
-as `cached`. Pass an explicit `<out>` directory only when the user wants the files somewhere
-specific. The summary line names the directory; read from there.
+as `cached`. Pass `--out <dir>` only when the user wants the files somewhere specific. The summary
+line names the directory and, for video, lists the chapters. `text.md` starts with front-matter
+(title, source, author, published) that Obsidian and graph tools read as is.
+
+## Reading what you ingested
+
+1. Map first. Video: the chapter list is already in the summary line. Paper: `grep -n '^--- \|^#\|\\\\section' text.md`.
+2. Targeted question: `grep -n -i <term> text.md`, then read a window around each hit (two minutes
+   of `[mm:ss]` lines, or one section). Answer with quoted lines and their timestamps or pages.
+   Do not read the whole file for a fact; focused context is more reliable than full context.
+3. Whole-source summary: read `text.md` end to end, quote the lines you will rely on first, then
+   synthesize. For "every number" or "all recommendations", summarize per chapter or section and merge.
+4. Pull a frame only when the transcript points at something visual ("as you can see", "this
+   chart", a figure that is not spoken). One `ffmpeg -ss` frame beats a sheet survey.
+5. Every number you cite must be grep-able in `text.md` or visible in a named frame. If it is not
+   there, say so; do not fill the gap from memory.
+6. As a subagent, return quotes with timestamps plus the directory path, not the transcript.
 
 ## Pick the cheapest path that answers the question
 
