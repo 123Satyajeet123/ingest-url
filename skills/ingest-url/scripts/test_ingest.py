@@ -51,6 +51,9 @@ assert r.returncode != 0 and "unavailable" in r.stderr and not (tmp / "neg-video
 r = run("article", ARTICLE, "--out", tmp / "art")
 assert r.returncode == 0 and "title: Building Effective AI Agents" in (tmp / "art/text.md").read_text()
 
+r = run("article", "https://news.ycombinator.com/item?id=49023019", "--out", tmp / "hn")
+assert r.returncode == 0 and (tmp / "hn/text.md").read_text().count("\n- **") > 20, "HN item must come back as a comment tree"
+
 r = run("article", "https://www.wsj.com/tech/ai", "--out", tmp / "neg-art")
 assert r.returncode != 0 and not (tmp / "neg-art/text.md").exists(), "paywall must fail loudly"
 

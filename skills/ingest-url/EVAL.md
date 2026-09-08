@@ -138,6 +138,15 @@ WebSearch (873 calls). Criteria S1-S8 were written before testing (search-eval/C
 | nothing (agent types the one-liners) | seen in logs; loses on consistency and parallelism |
 | own `find` subcommand | adopted. 5 platforms in parallel, 1.7s, per-platform blocks, a failed platform reports its error and the rest still answer |
 
+Trigger test of the 1.4.0 description (Claude Code, `claude -p`, WebFetch allowed): three
+find/read prompts fired the skill (3/3), three negatives stayed silent (0/3), including "search the
+web for the latest news", the case the wider wording put at risk. Quality split: "find talks and
+papers on X, which first" cost $1.06 and returned the paper, its first-author talk, and a watch
+order with timestamps; "what are people saying about X on YouTube and HN" cost $7.00, 41 tool
+calls, fanned out reader subagents and hit the turn cap before synthesizing. SKILL.md now says:
+three sources, one pass, widen only on request. Hacker News threads gained a native path
+(`article` on an item URL returns the comment tree) because the agent had hand-written a fetcher.
+
 Known weak spots: Semantic Scholar's shared pool throttles unpredictably (OpenAlex fallback
 ranks poorly); yt-dlp flat search omits upload dates; no free X or Instagram search exists.
 

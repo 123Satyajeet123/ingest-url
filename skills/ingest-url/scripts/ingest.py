@@ -13,7 +13,7 @@ OUT defaults to a content-addressed directory under the cache root, so a URL ing
 video    text.md ([mm:ss] transcript lines, CHAPTER lines) + manifest.json. Captions in the video's own language
          (English as fallback), else on-device speech-to-text in any language.
          --frames adds source.mp4, frames/<seconds>.jpg and sheets/NN.jpg contact sheets.
-article  text.md with title/date front-matter.
+article  text.md with title/date front-matter. Hacker News item URLs become the thread: story, then comments by score.
 pdf      text.md with "--- page N ---" markers + images/. Accepts a URL or a local path.
          arXiv URLs use the LaTeX source when available (equations and tables survive), else the PDF.
 find     QUERY -> candidate URLs from YouTube, arXiv, Semantic Scholar/OpenAlex, Hacker News, GitHub, one line each:
@@ -234,11 +234,34 @@ def video(url, out, frames=False):
 
 # ---------- article ----------
 
+def hn_thread(item_id):
+    """A Hacker News discussion as markdown: story line, then top-level comments and replies, indented, by rank."""
+    data = get_json(f"https://hn.algolia.com/api/v1/items/{item_id}")
+    strip = lambda html: re.sub(r"<[^>]+>", "", (html or "").replace("<p>", "\n\n")).strip()
+    lines = [front_matter(data.get("title") or f"HN {item_id}", f"https://news.ycombinator.com/item?id={item_id}",
+                          data.get("author"), (data.get("created_at") or "")[:10]),
+             f"# {data.get('title') or ''}", "", data.get("url") or "", "", strip(data.get("text")), ""]
+    def walk(node, depth):
+        for child in node.get("children") or []:
+            if child.get("text"):
+                lines.append(f"{'  ' * depth}- **{child.get('author')}**: {strip(child['text'])}")
+            walk(child, depth + 1)
+    walk(data, 0)
+    return "\n".join(lines) + "\n"
+
+
 def article(url, out):
     import trafilatura
     if cached(out, url):
         return
     out.mkdir(parents=True, exist_ok=True)
+    hn = re.search(r"news\.ycombinator\.com/item\?id=(\d+)", url)
+    if hn:
+        text = hn_thread(hn[1])
+        write_nonempty(out / "text.md", text)
+        (out / "manifest.json").write_text(json.dumps({"source_url": url, "comments": text.count("\n- **")}, indent=1))
+        print(f"{out}: HN thread, {text.count(chr(10) + '- **')} comments. Next: read {out / 'text.md'}")
+        return
     html = trafilatura.fetch_url(url)
     if not html:
         die(f"fetch failed for {url}")

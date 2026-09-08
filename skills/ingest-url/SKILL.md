@@ -5,7 +5,7 @@ license: MIT
 compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.4.0"
+  version: "1.5.0"
   verified: "2026-09-08"
 ---
 
@@ -19,7 +19,7 @@ Paths below are relative to this skill's base directory.
 S=<base directory>/scripts/ingest.py
 $S video   <url> [<url> ...]          # text.md + manifest.json per URL, ~15s each. Captions, else speech-to-text
 $S video   <url> --frames             # also source.mp4, frames/SSSSS.jpg (name = seconds), sheets/NN.jpg
-$S article <url> [<url> ...]          # text.md with title/date front-matter
+$S article <url> [<url> ...]          # text.md with front-matter; HN item URLs become the comment tree
 $S pdf     <url-or-path> [<url> ...]  # arXiv: LaTeX source with "--- file ---" markers; else "--- page N ---" + images/
 $S find    <topic words> [--sources youtube,arxiv,papers,hn,github] [--limit 8]   # candidate URLs, one block per platform
 ```
@@ -34,9 +34,13 @@ line names the directory and, for video, lists the chapters. `text.md` starts wi
 `find` returns per-platform lists, not one ranked list; views, citations, and points are not
 comparable, so you rank. It is keyless: YouTube via yt-dlp search, arXiv relevance search,
 Semantic Scholar with OpenAlex as fallback, Hacker News, GitHub. X and Instagram have no free
-search; use the user's logged-in browser for those and say so. For "what do talks on X say",
-run `find`, pick the URLs that match, then `video` on those URLs and grep the transcripts.
-General web questions belong to the harness's own web search, not here.
+search; use the user's logged-in browser for those and say so. For "what do talks on X say" or
+"what are people saying about X": run `find`, pick the two or three hits that match best, ingest
+those (`video` for talks, `article` for Hacker News threads, which come back as the full comment
+tree), and answer from them. Widen to more sources only if the user asks or the first pass
+disagrees with itself. Do not fan out subagents over every hit; one pass over three sources
+answers most discovery questions for about a dollar, a fan-out costs seven and often never
+finishes synthesizing. General web questions belong to the harness's own web search, not here.
 
 ## Reading what you ingested
 
