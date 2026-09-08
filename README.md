@@ -20,8 +20,8 @@ Every path exits nonzero with a reason instead of writing an empty file. Output 
 ## Install
 
 ```bash
-claude plugin marketplace add 123Satyajeet123/ingest-url && /plugin install ingest-url   # Claude Code
 npx skills add 123Satyajeet123/ingest-url                                               # any Agent Skills client
+claude plugin marketplace add 123Satyajeet123/ingest-url && /plugin install ingest-url   # Claude Code
 pi install git:github.com/123Satyajeet123/ingest-url                                    # pi
 ```
 
