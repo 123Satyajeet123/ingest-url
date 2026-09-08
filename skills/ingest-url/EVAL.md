@@ -116,6 +116,15 @@ Reading:
   spending money and writes results after each run.
 - Total spend for all eval runs, including the two wasted ones: about $17.
 
+## Platform and language agnosticism (1.2.0)
+
+| change | evidence |
+|---|---|
+| speech-to-text backend chosen by platform marker in the script's inline dependencies | faster-whisper 1.2.1 `large-v3-turbo` on CPU: 24s for the 50s reel, 2m40s for the 167s clip; transcript byte-identical to mlx-whisper on the reel |
+| captions in the video's own language, English fallback | Spanish TEDx talk (i5ui_DrtcpU): picked the uploader's `es` track over `es-orig` auto and over English, 711 words, manifest language `es` |
+| content-addressed cache, default output dir | second call 0.04s vs 6.8s; asking for `--frames` after a transcript-only run re-ingests instead of serving the cache |
+| TikTok | not testable here: TLS handshake to tiktok.com fails from plain curl too (blocked in India). yt-dlp has the extractor |
+
 ## Not covered yet
-- TikTok (needs a video URL).
-- Linux speech-to-text (mlx-whisper is Apple Silicon only).
+- Windows.
+- TikTok end to end (network-blocked where this was built).

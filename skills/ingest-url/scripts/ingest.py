@@ -1,19 +1,28 @@
 #!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["yt-dlp[default,curl-cffi]", "pillow", "trafilatura", "pymupdf4llm", "mlx-whisper; sys_platform == 'darwin'"]
+# dependencies = [
+#   "yt-dlp[default,curl-cffi]", "pillow", "trafilatura", "pymupdf4llm",
+#   "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
+#   "faster-whisper; sys_platform != 'darwin' or platform_machine != 'arm64'",
+# ]
 # ///
 """Turn one URL into agent-readable files in OUT. Fails loudly: nonzero exit with a reason, never an empty text.md.
+OUT defaults to a content-addressed directory under the cache root, so a URL ingested once is free the next time.
 
-video    text.md ([mm:ss] transcript lines, CHAPTER lines) + manifest.json. Captions, else speech-to-text.
+video    text.md ([mm:ss] transcript lines, CHAPTER lines) + manifest.json. Captions in the video's own language
+         (English as fallback), else on-device speech-to-text in any language.
          --frames adds source.mp4, frames/<seconds>.jpg and sheets/NN.jpg contact sheets.
 article  text.md with title/date front-matter.
 pdf      text.md with "--- page N ---" markers + images/. Accepts a URL or a local path.
 """
-import argparse, json, os, re, subprocess, sys, urllib.request
+import argparse, hashlib, json, os, re, subprocess, sys, urllib.request
 from pathlib import Path
 
+CACHE_ROOT = Path(os.environ.get("INGEST_CACHE", Path.home() / ".cache/ingest-url"))
 COOKIE_BROWSER = os.environ.get("INGEST_BROWSER", "chrome")   # browser whose cookies yt-dlp uses
+STT_BACKEND = os.environ.get("INGEST_STT", "auto")              # auto | mlx-whisper | faster-whisper
+STT_MODEL = "large-v3-turbo"
 SCENE_THRESHOLD = 0.35
 FRAME_FLOOR_SECONDS = 10    # at least one frame every N seconds, so reels and slow fades still get sampled
 BUCKET_SECONDS = 60
@@ -29,6 +38,18 @@ def write_nonempty(path, text):
     if not text.strip():
         die(f"no text extracted for {path.parent.name}; paywalled or client-rendered? Open it in a browser session that carries your login")
     path.write_text(text)
+
+
+def cached(out, url, frames=False):
+    """True when OUT already holds a finished ingest of this URL with at least what was asked for."""
+    manifest = out / "manifest.json"
+    if not manifest.exists():
+        return False
+    m = json.loads(manifest.read_text())
+    if m.get("source_url") != url or (frames and not m.get("frames_requested")):
+        return False
+    print(f"{out}: cached. Next: read {out / 'text.md'}" + (f", then {out / 'sheets'}" if m.get("frames_requested") else ""))
+    return True
 
 
 def mmss(seconds):
@@ -61,17 +82,31 @@ def vtt_segments(path):
     return segments
 
 
+def stt_backend():
+    """mlx-whisper on Apple Silicon, faster-whisper (CPU or CUDA) everywhere else; INGEST_STT overrides."""
+    for name in ([STT_BACKEND] if STT_BACKEND != "auto" else ["mlx-whisper", "faster-whisper"]):
+        try:
+            return name, __import__(name.replace("-", "_"))
+        except ImportError:
+            continue
+    die("no captions and no speech-to-text backend importable; install mlx-whisper (Apple Silicon) or faster-whisper")
+
+
 def asr_segments(media):
-    """(seconds, text) from on-device speech-to-text, for platforms without captions. Apple Silicon only."""
-    try:
-        import mlx_whisper
-    except ImportError:
-        die("no captions and mlx-whisper unavailable on this platform; transcribe the audio with whisper.cpp or faster-whisper")
+    """(seconds, text, language) from on-device speech-to-text, for platforms without captions."""
+    name, module = stt_backend()
     wav = media.with_suffix(".wav")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", str(wav)], check=True)
-    result = mlx_whisper.transcribe(str(wav), path_or_hf_repo="mlx-community/whisper-large-v3-turbo")
+    if name == "mlx-whisper":
+        result = module.transcribe(str(wav), path_or_hf_repo=f"mlx-community/whisper-{STT_MODEL}")
+        segments, language = result["segments"], result.get("language")
+        segments = [(int(s["start"]), s["text"]) for s in segments]
+    else:
+        model = module.WhisperModel(STT_MODEL, device="auto", compute_type="auto")
+        raw, info = model.transcribe(str(wav))
+        segments, language = [(int(s.start), s.text) for s in raw], info.language
     wav.unlink()
-    return [(int(s["start"]), s["text"].strip()) for s in result["segments"] if s["text"].strip()]
+    return [(t, text.strip()) for t, text in segments if text.strip()], language
 
 
 def transcript_markdown(info, segments):
@@ -132,43 +167,69 @@ def download_media(url, out, with_video):
     return media[0]
 
 
+def caption_file(out, language):
+    """Best caption track: the video's own language first, English second, uploader tracks before auto-generated."""
+    files = list(out.glob("source.*.vtt"))
+    if not files:
+        return None
+    lang = (language or "en").split("-")[0]
+    return min(files, key=lambda p: (not p.name.startswith(f"source.{lang}"), "orig" in p.name, p.name))
+
+
 def video(url, out, frames=False):
+    if cached(out, url, frames):
+        return
     out.mkdir(parents=True, exist_ok=True)
-    ytdlp(["--write-auto-subs", "--write-subs", "--sub-langs", "en.*,en", "--write-info-json", "--skip-download",
-           "-o", str(out / "source.%(ext)s"), url])
+    ytdlp(["--write-info-json", "--skip-download", "-o", str(out / "source.%(ext)s"), url])
     info = json.loads((out / "source.info.json").read_text())
-    captions = sorted(out.glob("source.en*.vtt"), key=lambda p: ("orig" in p.name, p.name))
+    language = info.get("language")
+    lang = (language or "en").split("-")[0]
+    ytdlp(["--write-auto-subs", "--write-subs", "--sub-langs", f"{lang},{lang}-orig,en,en-orig", "--skip-download",
+           "-o", str(out / "source.%(ext)s"), url])
+    captions = caption_file(out, language)
     media = download_media(url, out, with_video=frames) if frames or not captions else None
-    segments = vtt_segments(captions[0]) if captions else asr_segments(media)
+    if captions:
+        segments = vtt_segments(captions)
+        language = captions.name.split(".")[1].split("-")[0]
+    else:
+        segments, language = asr_segments(media)
     write_nonempty(out / "text.md", transcript_markdown(info, segments))
     manifest = {k: info.get(k) for k in ("id", "title", "channel", "upload_date", "duration", "chapters", "webpage_url")}
+    manifest |= {"source_url": url, "frames_requested": frames}
     manifest["transcript"] = "captions" if captions else "speech-to-text"
+    manifest["language"] = language
     manifest["words"] = sum(len(t.split()) for _, t in segments)
     if frames:
         manifest["frames"] = len(scene_frames(media, out / "frames"))
         manifest["sheets"] = len(contact_sheets(sorted((out / "frames").glob("*.jpg")), out / "sheets"))
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
-    print(f"{out}: {manifest.get('duration')}s, {manifest['words']} words from {manifest['transcript']}, "
-          f"{len(manifest.get('chapters') or [])} chapters, {manifest.get('frames', 0)} frames, {manifest.get('sheets', 0)} sheets")
+    print(f"{out}: {manifest.get('duration')}s, {manifest['words']} words from {manifest['transcript']} ({language}), "
+          f"{len(manifest.get('chapters') or [])} chapters, {manifest.get('frames', 0)} frames, {manifest.get('sheets', 0)} sheets. "
+          f"Next: read {out / 'text.md'}" + (f", then {out / 'sheets'}" if frames else ""))
 
 
 # ---------- article ----------
 
 def article(url, out):
     import trafilatura
+    if cached(out, url):
+        return
     out.mkdir(parents=True, exist_ok=True)
     html = trafilatura.fetch_url(url)
     if not html:
         die(f"fetch failed for {url}")
     text = trafilatura.extract(html, url=url, output_format="markdown", with_metadata=True, include_links=False) or ""
     write_nonempty(out / "text.md", text)
-    print(f"{out}: {len(text.splitlines())} lines")
+    (out / "manifest.json").write_text(json.dumps({"source_url": url, "lines": len(text.splitlines())}, indent=1))
+    print(f"{out}: {len(text.splitlines())} lines. Next: read {out / 'text.md'}")
 
 
 # ---------- pdf ----------
 
 def pdf(source, out):
     import pymupdf4llm
+    if cached(out, source):
+        return
     out.mkdir(parents=True, exist_ok=True)
     path = Path(source)
     if source.startswith("http"):
@@ -177,16 +238,20 @@ def pdf(source, out):
     pages = pymupdf4llm.to_markdown(str(path), page_chunks=True, write_images=True, image_path=str(out / "images"))
     text = "".join(f"\n\n--- page {n} ---\n\n{p['text']}" for n, p in enumerate(pages, 1))
     write_nonempty(out / "text.md", text)
-    print(f"{out}: {len(pages)} pages, {len(list((out / 'images').glob('*')))} images")
+    images = len(list((out / "images").glob("*")))
+    (out / "manifest.json").write_text(json.dumps({"source_url": source, "pages": len(pages), "images": images}, indent=1))
+    print(f"{out}: {len(pages)} pages, {images} images. Next: read {out / 'text.md'}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("kind", choices=("video", "article", "pdf"))
     parser.add_argument("url")
-    parser.add_argument("out", type=Path)
+    parser.add_argument("out", type=Path, nargs="?", help="default: <cache root>/<12-char hash of url>")
     parser.add_argument("--frames", action="store_true", help="video only: extract scene frames and contact sheets")
     a = parser.parse_args()
+    if a.out is None:
+        a.out = CACHE_ROOT / hashlib.sha1(a.url.encode()).hexdigest()[:12]
     if a.frames and a.kind != "video":
         parser.error("--frames applies to video only")
     {"video": lambda: video(a.url, a.out, frames=a.frames), "article": lambda: article(a.url, a.out), "pdf": lambda: pdf(a.url, a.out)}[a.kind]()

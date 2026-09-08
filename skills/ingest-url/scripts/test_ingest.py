@@ -9,6 +9,7 @@ NOCAP = "https://www.youtube.com/watch?v=pjT9nUhlwxQ"         # 68s, no captions
 TALK = "https://www.youtube.com/watch?v=3rWSvrFahIY"          # 77min, 7 chapters
 ARTICLE = "https://www.anthropic.com/engineering/building-effective-agents"
 PDF = "https://arxiv.org/pdf/2210.03629"
+SPANISH = "https://www.youtube.com/watch?v=i5ui_DrtcpU"       # 282s TEDx talk, uploader captions in es
 
 
 def run(*args):
@@ -29,6 +30,13 @@ r = run("video", TALK, tmp / "talk")
 assert r.returncode == 0, r.stderr
 assert (tmp / "talk/text.md").read_text().count("\nCHAPTER ") == 7
 assert not (tmp / "talk/frames").exists() and not (tmp / "talk/source.mp4").exists(), "default must not download video"
+
+r = run("video", SPANISH, tmp / "es")
+assert r.returncode == 0, r.stderr
+assert json.loads((tmp / "es/manifest.json").read_text())["language"] == "es", "must pick the video's own language"
+
+r = run("video", CLIP, tmp / "clip")
+assert r.returncode == 0 and "cached" in r.stdout, "same URL and no new request must be served from cache"
 
 r = run("video", NOCAP, tmp / "nocap")
 assert r.returncode == 0, r.stderr

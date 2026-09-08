@@ -1,6 +1,10 @@
 # ingest-url
 
-An [Agent Skill](https://agentskills.io) that turns a URL into files an agent can read.
+An [Agent Skill](https://agentskills.io) that turns a video, reel, X post, PDF, or article into
+files an agent can grep and cite by timestamp. Captions first, on-device speech-to-text second,
+frames last, and a nonzero exit instead of a made-up summary. Ingested URLs are cached on disk,
+so the second agent, session, or subagent that needs the same link pays nothing. Ships with
+with/without evals that show where it pays for itself and where it does not.
 Works in Claude Code, pi, and any agent that implements the Agent Skills spec.
 
 | source | what the agent gets |
@@ -49,15 +53,19 @@ Or copy `skills/ingest-url` into your agent's skills directory.
 
 `uv`, `ffmpeg`, and a browser whose cookies yt-dlp can read (Chrome by default; set
 `INGEST_BROWSER=firefox` or similar to change). Python dependencies install themselves on first
-run from the script's inline metadata. Speech-to-text uses mlx-whisper and needs Apple Silicon;
-elsewhere the script says so and names a fallback.
+run from the script's inline metadata, including the right speech-to-text backend for the
+machine: mlx-whisper on Apple Silicon, faster-whisper (CPU or CUDA) everywhere else. Both use
+Whisper large-v3-turbo and produced identical transcripts in testing. `INGEST_STT` forces one.
 
 ## Output layout
+
+Output lands in `~/.cache/ingest-url/<hash of url>/` unless an output directory is given, and a
+URL already ingested is served from there in milliseconds. `INGEST_CACHE` moves the root.
 
 ```
 <out>/
   text.md          transcript with CHAPTER and [mm:ss] lines, or article/PDF markdown
-  manifest.json    id, title, channel, date, duration, chapters, transcript source, word count
+  manifest.json    id, title, channel, date, duration, chapters, language, transcript source, word count
   frames/00083.jpg scene frame at 1:23 (with --frames)
   sheets/00.jpg    48 labelled frames per sheet (with --frames)
   images/          figures extracted from a PDF
@@ -90,8 +98,9 @@ from metadata. Numbers and the description A/B are in EVAL.md.
 
 ## Limits
 
-TikTok is untested. Speech-to-text is Apple Silicon only. The script reads English captions;
-other languages fall through to speech-to-text.
+Windows is untested. TikTok could not be tested from the author's network (the site is blocked
+in India at the TLS level), though yt-dlp supports it. Captions are taken in the video's own
+language with English as the fallback; speech-to-text detects the language itself.
 
 ## License
 
