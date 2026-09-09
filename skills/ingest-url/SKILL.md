@@ -5,7 +5,7 @@ license: MIT
 compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.5.1"
+  version: "1.6.0"
   verified: "2026-09-08"
 ---
 
@@ -22,6 +22,7 @@ $S video   <url> --frames             # also source.mp4, frames/SSSSS.jpg (name 
 $S article <url> [<url> ...]          # text.md with front-matter; HN item URLs become the comment tree
 $S pdf     <url-or-path> [<url> ...]  # arXiv: LaTeX source with "--- file ---" markers; else "--- page N ---" + images/
 $S find    <topic words> [--sources youtube,arxiv,papers,hn,github] [--limit 8]   # candidate URLs, one block per platform
+$S pull    [--sources inbox,ytwatchlater,ytliked] [--limit 10]   # ingest what the user saved; prints one line per new item
 ```
 
 Output goes to `~/.cache/ingest-url/<hash of url>/` and a URL already ingested returns instantly
@@ -40,6 +41,19 @@ tree), and answer from them. Widen only if the user asks or the first pass disag
 with itself. Do not fan out subagents over every hit: measured, one pass over three sources
 costs about $1, a fan-out $7 and it hit the turn cap. General web questions belong to the
 harness's own web search.
+
+## Filing what you pulled
+
+`pull` ingests what the user saved on their phone or in YouTube and prints one line per new item
+with its cache directory. The user's projects each have a status file at `~/notes/<repo>/STATUS.md`.
+For every new item: read all status files, read the head of the item's `text.md`, and append one
+line to the one project it serves:
+
+    - 2026-09-10 | <title> | <url> | <one line: which open loop or next step it informs>
+
+in `~/notes/<repo>/SOURCES.md`. If it serves none, append the same line to `~/notes/inbox/UNSORTED.md`
+with the reason it fits nothing. Never file without a stated reason, never file into two projects,
+and never invent a project. Unreachable or empty items are already reported by `pull`; leave them.
 
 ## Reading what you ingested
 

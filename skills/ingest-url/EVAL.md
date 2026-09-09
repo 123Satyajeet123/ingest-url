@@ -89,5 +89,17 @@ end to end because the rig went down.
 Two bugs each cost a run: Haiku wraps its JSON verdict in a code fence; YAML rejects `\.` in
 double-quoted regex. The runner validates cases before spending and writes results after each run.
 
+## Phase 2: pull (1.6.0)
+
+Need, from the author's session logs: the user is the recommender; what they deliberately save is
+the high-signal stream, and feeds are not (Liked was mostly noise, Watch Later was talks). Criteria
+P1-P8 were written before code (~/notes/work/audit-2026-09-10/gates/phase2.md).
+
+| check | result |
+|---|---|
+| consume-once inbox with three URLs: a youtu.be short link, an article with utm params, a dead host | 2 new, 1 failed on its own line, inbox emptied, inbox.done has three stamped lines |
+| second run with URL variants of the same items | 0 new, 1 cached: youtu.be and watch?v= collapse to one cache key |
+| unknown source | exits 2 |
+
 ## Not covered
 Windows. TikTok end to end.
