@@ -1,11 +1,13 @@
 {
   "name": "ingest-url",
-  "owner": { "name": "Satyajeet Das" },
+  "owner": {
+    "name": "Satyajeet Das"
+  },
+  "description": "URL to agent-readable text, timestamps, and frames",
   "plugins": [
     {
       "name": "ingest-url",
-      "source": "github",
-      "repo": "123Satyajeet123/ingest-url",
+      "source": "./",
       "description": "Turn any URL (YouTube, reels, X, articles, PDFs) into agent-readable text, timestamps, and frames on disk"
     }
   ]
