@@ -4,7 +4,8 @@ Your agent cannot watch a video. Paste a YouTube link into Claude Code and WebFe
 
 ingest-url is an [Agent Skill](https://agentskills.io) that gives the agent the talk itself: a timestamped transcript with chapters, frames when the speaker points at a slide, the paper's LaTeX, the thread's comments. One command, cached, and it fails out loud instead of returning nothing.
 
-![demo](docs/demo.gif)
+<img width="1280" height="831" alt="PHOTO-2026-09-09-15-58-36" src="https://github.com/user-attachments/assets/e8a3d3a0-4854-4523-b536-4fc80e16f4e3" />
+
 
 | input | output |
 |---|---|
