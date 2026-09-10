@@ -1,6 +1,6 @@
 {
   "name": "ingest-url",
   "description": "Turn any URL (YouTube, reels, X, articles, PDFs) into agent-readable text, timestamps, and frames on disk",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "author": { "name": "Satyajeet Das" }
 }

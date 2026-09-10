@@ -101,5 +101,13 @@ P1-P8 were written before code (~/notes/work/audit-2026-09-10/gates/phase2.md).
 | second run with URL variants of the same items | 0 new, 1 cached: youtu.be and watch?v= collapse to one cache key |
 | unknown source | exits 2 |
 
+## Browser history as a source (1.7.0)
+
+Measured on the author's Brave history over 14 days before building: 202 distinct YouTube videos,
+56 GitHub repos, 29 X posts, 7 arXiv papers; 216 video visits over 20 minutes. Visit duration
+counts tabs left open, so the threshold separates "kept around" from "bounced", not watch time.
+The source reads a copy of the locked History file, filters by domain and duration, orders newest
+first, caps at --limit; tested against a synthetic History db in both directions.
+
 ## Not covered
 Windows. TikTok end to end.

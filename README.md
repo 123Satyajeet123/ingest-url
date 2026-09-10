@@ -35,12 +35,15 @@ ingest.py video   <url> [<url> ...] [--frames]
 ingest.py article <url> [<url> ...]
 ingest.py pdf     <url-or-path> [<url> ...]
 ingest.py find    <topic words> [--sources youtube,arxiv,papers,hn,github] [--limit 8]
-ingest.py pull    [--sources inbox,ytwatchlater,ytliked] [--limit 10]
+ingest.py pull    [--sources inbox,browser,ytwatchlater,ytliked] [--limit 10]
 ```
 
-`pull` ingests what you saved: a text file of URLs (one per line, consumed once; on a Mac, point it
-at iCloud Drive and an iOS share-sheet Shortcut appends to it from the phone), your YouTube Watch
-Later, your YouTube Liked. Already-ingested URLs are skipped. SKILL.md then tells the agent how to
+`pull` ingests what you saved or kept open: a text file of URLs (one per line, consumed once; on a
+Mac, point it at iCloud Drive and an iOS share-sheet Shortcut appends to it from the phone), your
+YouTube Watch Later and Liked, and your browser history (Brave, else Chrome): videos, arXiv papers,
+X posts, GitHub repos and PDFs that stayed open longer than `INGEST_MIN_MINUTES` (20) in the last
+`INGEST_HISTORY_DAYS` (7). The history file is read from a copy; nothing touches the browser.
+Already-ingested URLs are skipped. SKILL.md then tells the agent how to
 file each item under the project it serves, with a reason, never without one.
 
 SKILL.md tells the agent which path is cheapest for which question and how to read the result: map first, grep a window for a fact, whole read for a summary, one frame when the speaker points at a slide.

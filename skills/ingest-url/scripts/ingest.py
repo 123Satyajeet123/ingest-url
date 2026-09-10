@@ -18,7 +18,8 @@ pdf      arXiv: LaTeX source with "--- file ---" markers. Else "--- page N ---" 
 find     one block per platform (YouTube, arXiv, Semantic Scholar/OpenAlex, Hacker News, GitHub):
          date | signal | title | url. No merged ranking.
 pull     ingest what the user saved: ~/notes/inbox.txt (one URL per line, consumed once), YouTube Watch
-         Later, YouTube Liked. Already-cached URLs are skipped; each item prints its own summary line.
+         Later, YouTube Liked, and the browser history (Brave, else Chrome): videos, papers, posts, repos
+         and PDFs kept open longer than INGEST_MIN_MINUTES. Already-cached URLs are skipped.
 """
 
 import argparse
@@ -28,9 +29,12 @@ import importlib
 import json
 import os
 import re
+import shutil
+import sqlite3
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -49,6 +53,26 @@ MIN_SECONDS_BETWEEN_FRAMES = 10
 BUCKET_SECONDS = 60
 COLS, ROWS, TILE_W, TILE_H = 6, 8, 320, 180
 INBOX = Path(os.environ.get("INGEST_INBOX", Path.home() / "notes/inbox.txt"))
+HISTORY_CANDIDATES = (
+    Path.home() / "Library/Application Support/BraveSoftware/Brave-Browser/Default/History",
+    Path.home() / "Library/Application Support/Google/Chrome/Default/History",
+)
+HISTORY_FILE = (
+    Path(os.environ["INGEST_HISTORY"])
+    if os.environ.get("INGEST_HISTORY")
+    else next((p for p in HISTORY_CANDIDATES if p.exists()), None)
+)
+MIN_MINUTES = float(os.environ.get("INGEST_MIN_MINUTES", "20"))
+HISTORY_DAYS = int(os.environ.get("INGEST_HISTORY_DAYS", "7"))
+HISTORY_URL_PATTERNS = (
+    "%youtube.com/watch%",
+    "%arxiv.org/abs/%",
+    "%arxiv.org/pdf/%",
+    "%x.com/%/status/%",
+    "%github.com/%/%",
+    "%.pdf",
+)
+WEBKIT_EPOCH_OFFSET = 11644473600  # Chromium stores microseconds since 1601-01-01
 VIDEO_HOSTS = ("youtube.com", "youtu.be", "instagram.com", "x.com", "twitter.com", "tiktok.com", "vimeo.com")
 YOUTUBE_ID = re.compile(r"(?:youtu\.be/|[?&]v=)([\w-]{11})")
 HN_ITEM = re.compile(r"news\.ycombinator\.com/item\?id=(\d+)")
@@ -608,6 +632,29 @@ def youtube_playlist(list_id, limit):
     return proc.stdout.split()
 
 
+def history_visits(history_file, min_minutes, days, limit, now=None):
+    """URLs from a Chromium History db, newest first, kept open at least min_minutes within the last days."""
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "History"
+        shutil.copy(history_file, copy)  # the live file is locked by the browser; a copy is not
+        since = ((now or time.time()) - days * 86400 + WEBKIT_EPOCH_OFFSET) * 1_000_000
+        domain_filter = " OR ".join("u.url LIKE ?" for _ in HISTORY_URL_PATTERNS)
+        query = (
+            "SELECT u.url FROM visits v JOIN urls u ON u.id = v.url "
+            f"WHERE ({domain_filter}) AND v.visit_time > ? AND u.url NOT LIKE '%github.com/%/%/%' "
+            "GROUP BY u.id HAVING max(v.visit_duration) >= ? ORDER BY max(v.visit_time) DESC LIMIT ?"
+        )
+        params = (*HISTORY_URL_PATTERNS, since, min_minutes * 60_000_000, limit)
+        with sqlite3.connect(copy) as db:
+            return [row[0] for row in db.execute(query, params)]
+
+
+def browser_urls(limit):
+    if HISTORY_FILE is None or not HISTORY_FILE.is_file():
+        raise IngestError(f"browser History file not found ({HISTORY_FILE}); set INGEST_HISTORY to a Chromium History path")
+    return history_visits(HISTORY_FILE, MIN_MINUTES, HISTORY_DAYS, limit)
+
+
 def inbox_urls(limit):
     if not INBOX.exists():
         return []
@@ -616,6 +663,7 @@ def inbox_urls(limit):
 
 PULLERS = {
     "inbox": inbox_urls,
+    "browser": browser_urls,
     "ytwatchlater": functools.partial(youtube_playlist, "WL"),
     "ytliked": functools.partial(youtube_playlist, "LL"),
 }

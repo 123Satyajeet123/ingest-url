@@ -5,7 +5,7 @@ license: MIT
 compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.6.0"
+  version: "1.7.0"
   verified: "2026-09-08"
 ---
 
@@ -22,7 +22,7 @@ $S video   <url> --frames             # also source.mp4, frames/SSSSS.jpg (name 
 $S article <url> [<url> ...]          # text.md with front-matter; HN item URLs become the comment tree
 $S pdf     <url-or-path> [<url> ...]  # arXiv: LaTeX source with "--- file ---" markers; else "--- page N ---" + images/
 $S find    <topic words> [--sources youtube,arxiv,papers,hn,github] [--limit 8]   # candidate URLs, one block per platform
-$S pull    [--sources inbox,ytwatchlater,ytliked] [--limit 10]   # ingest what the user saved; prints one line per new item
+$S pull    [--sources inbox,browser,ytwatchlater,ytliked] [--limit 10]   # ingest what the user saved or kept open; one line per new item
 ```
 
 Output goes to `~/.cache/ingest-url/<hash of url>/` and a URL already ingested returns instantly
@@ -49,7 +49,10 @@ with its cache directory. The user's projects each have a status file at `~/note
 For every new item: read all status files, read the head of the item's `text.md`, and append one
 line to the one project it serves:
 
-    - 2026-09-10 | <title> | <url> | <one line: which open loop or next step it informs>
+    - 2026-09-10 | <title> | <url> | must-read | <one line: which open loop or next step it informs>
+
+The grade is must-read, skim, or skip: must-read changes a decision in that project, skim adds
+background, skip is filed only so the pull is not repeated.
 
 in `~/notes/<repo>/SOURCES.md`. If it serves none, append the same line to `~/notes/inbox/UNSORTED.md`
 with the reason it fits nothing. Never file without a stated reason, never file into two projects,

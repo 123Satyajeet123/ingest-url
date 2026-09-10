@@ -5,10 +5,12 @@ import contextlib
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 import ingest
@@ -249,5 +251,55 @@ r = subprocess.run([str(INGEST), "pull", "--sources", "inbox"], capture_output=T
 assert "0 new, 0 failed, 1 cached" in r.stdout, "a URL variant already ingested must be served from cache"
 assert subprocess.run([str(INGEST), "pull", "--sources", "nope"], capture_output=True).returncode != 0
 
+
+# ---- pull --sources browser: fake Chromium History, threshold, domains, order, cap ----
+history = tmp / "History"
+with sqlite3.connect(history) as db:
+    db.execute("CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT)")
+    db.execute("CREATE TABLE visits (id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER, visit_duration INTEGER)")
+    now_us = int((time.time() + ingest.WEBKIT_EPOCH_OFFSET) * 1_000_000)
+    minute = 60_000_000
+    rows = [
+        (1, "https://www.youtube.com/watch?v=long_old", now_us - 10 * 86400 * 1_000_000, 40 * minute),  # too old
+        (2, "https://www.youtube.com/watch?v=short", now_us - 1000, 3 * minute),  # too short
+        (3, "https://www.youtube.com/watch?v=kept", now_us - 3000, 25 * minute),
+        (4, "https://arxiv.org/abs/2604.20209", now_us - 2000, 30 * minute),
+        (5, "https://github.com/owner/repo", now_us - 1000, 21 * minute),
+        (6, "https://github.com/owner/repo/issues/1", now_us - 500, 60 * minute),  # deeper than repo root
+        (7, "https://news.example.com/story", now_us - 100, 90 * minute),  # not a capture domain
+        (8, "https://x.com/u/status/1", now_us - 4000, 20 * minute),
+    ]
+    for uid, url, t_us, dur in rows:
+        db.execute("INSERT INTO urls VALUES (?, ?, ?)", (uid, url, url))
+        db.execute("INSERT INTO visits VALUES (NULL, ?, ?, ?)", (uid, t_us, dur))
+    db.execute(
+        "INSERT INTO visits VALUES (NULL, 3, ?, ?)", (now_us - 9000, 1 * minute)
+    )  # a short earlier visit must not hide the long one
+picked = ingest.history_visits(history, 20, 7, 10)
+assert picked == [
+    "https://github.com/owner/repo",
+    "https://arxiv.org/abs/2604.20209",
+    "https://www.youtube.com/watch?v=kept",
+    "https://x.com/u/status/1",
+], picked
+assert ingest.history_visits(history, 20, 7, 2) == picked[:2], "cap applies after ordering"
+assert ingest.history_visits(history, 60, 7, 10) == [], "raising the threshold empties the list"
+assert ingest.history_visits(history, 20, 30, 10)[-1] == "https://www.youtube.com/watch?v=long_old", (
+    "a wider window admits the old one"
+)
+r = subprocess.run(
+    [str(INGEST), "pull", "--sources", "browser", "--limit", "1"],
+    capture_output=True,
+    text=True,
+    env={**os.environ, "INGEST_HISTORY": str(history), "INGEST_CACHE": str(tmp / "pullcache")},
+)
+assert r.returncode == 0 and ("1 new" in r.stdout or "1 failed" in r.stdout), r.stdout + r.stderr
+r = subprocess.run(
+    [str(INGEST), "pull", "--sources", "browser"],
+    capture_output=True,
+    text=True,
+    env={**os.environ, "INGEST_HISTORY": str(tmp / "missing"), "INGEST_CACHE": str(tmp / "pullcache")},
+)
+assert r.returncode != 0 and "History" in r.stderr, "a missing history file must fail loudly"
 
 print("ok", tmp)
