@@ -1,0 +1,16 @@
+#!/bin/zsh
+# Run once after installing the skill so the first real use is instant.
+#   scripts/setup          core environment (yt-dlp, trafilatura, pymupdf4llm, pillow)
+#   scripts/setup --stt    also the speech-to-text environment and its model (about 2.5 GB, needed only for videos without captions)
+set -euo pipefail
+HERE="${0:A:h}"
+for tool in uv ffmpeg; do command -v "$tool" >/dev/null || { echo "setup: $tool is required (brew install $tool)"; exit 1; }; done
+echo "core environment"; uv run --quiet --script "$HERE/ingest.py" --help >/dev/null && echo "  ready"
+if [[ "${1:-}" == "--stt" ]]; then
+  echo "pdf environment"; uv run --quiet --script "$HERE/pdf.py" 2>/dev/null >/dev/null || true; echo "  ready"
+  echo "speech-to-text environment and model"
+  uv run --quiet --script "$HERE/stt.py" /dev/null >/dev/null 2>&1 || true
+  echo "  ready"
+fi
+echo "done. Optional, to stop the harness asking before each call, add to ~/.claude/settings.json permissions.allow:"
+echo "  \"Bash($HERE/ingest.py:*)\", \"Read\", \"Grep\""

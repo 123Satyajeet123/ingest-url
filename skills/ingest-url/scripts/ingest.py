@@ -1,11 +1,7 @@
 #!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = [
-#   "yt-dlp[default,curl-cffi]", "pillow", "trafilatura", "pymupdf4llm",
-#   "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
-#   "faster-whisper; sys_platform != 'darwin' or platform_machine != 'arm64'",
-# ]
+# dependencies = ["yt-dlp[default,curl-cffi]", "pillow", "trafilatura"]
 # ///
 """URL -> agent-readable files. Nonzero exit with a reason, never an empty text.md.
 Output: ~/.cache/ingest-url/<hash>/ unless --out; a repeat URL is served from there.
@@ -25,7 +21,6 @@ pull     ingest what the user saved: ~/notes/inbox.txt (one URL per line, consum
 import argparse
 import functools
 import hashlib
-import importlib
 import json
 import os
 import re
@@ -44,8 +39,9 @@ from pathlib import Path
 
 CACHE_ROOT = Path(os.environ.get("INGEST_CACHE", Path.home() / ".cache/ingest-url"))
 COOKIE_BROWSER = os.environ.get("INGEST_BROWSER", "chrome")
-STT_BACKEND = os.environ.get("INGEST_STT", "auto")  # auto | mlx-whisper | faster-whisper
-STT_MODEL = "large-v3-turbo"
+STT_SCRIPT = Path(__file__).with_name("stt.py")  # its own environment: captioned videos never install it
+PDF_SCRIPT = Path(__file__).with_name("pdf.py")  # its own environment: pymupdf is 190 MB nobody needs for a video
+BLOCKED = re.compile(r"403|429|Forbidden|Too Many Requests|Sign in to confirm|not a bot", re.I)
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128 Safari/537.36"
 OUTPUT_TEMPLATE = "source.%(ext)s"
 SCENE_THRESHOLD = 0.35
@@ -148,9 +144,19 @@ def front_matter(title, source, author=None, published=None):
 # ---------- video ----------
 
 
-def ytdlp(args):
-    base = [sys.executable, "-m", "yt_dlp", "--cookies-from-browser", COOKIE_BROWSER, "--impersonate", "chrome", "--no-progress"]
-    return run_or_fail(base + args).stdout
+def ytdlp(args, cookies=False):
+    """Plain first; browser cookies (a Keychain prompt on macOS) only when the site blocks the plain request."""
+    base = [sys.executable, "-m", "yt_dlp", "--no-progress"]
+    with_cookies = ["--cookies-from-browser", COOKIE_BROWSER, "--impersonate", "chrome"]
+    if cookies:
+        return run_or_fail(base + with_cookies + args).stdout
+    try:
+        return run_or_fail(base + args).stdout
+    except IngestError as error:
+        if not BLOCKED.search(str(error)):
+            raise
+        print(f"blocked without cookies ({str(error)[:60]}); retrying with {COOKIE_BROWSER} cookies")
+        return run_or_fail(base + with_cookies + args).stdout
 
 
 def fetch_video_info(url, out):
@@ -214,31 +220,22 @@ def download_media(url, out, with_video):
     return media
 
 
-def stt_backend():
-    names = [STT_BACKEND] if STT_BACKEND != "auto" else ["mlx-whisper", "faster-whisper"]
-    for name in names:
-        try:
-            return name, importlib.import_module(name.replace("-", "_"))
-        except ImportError:
-            continue
-    raise IngestError(
-        "no captions and no speech-to-text backend importable; install mlx-whisper (Apple Silicon) or faster-whisper"
-    )
+def stt_result(stdout):
+    """(segments, language) from stt.py's JSON line; anything else is a failure with the raw text."""
+    try:
+        data = json.loads(stdout.strip().splitlines()[-1])
+        return [(int(t), text) for t, text in data["segments"]], data.get("language")
+    except (ValueError, KeyError, IndexError, TypeError) as error:
+        raise IngestError(f"speech-to-text returned no transcript: {stdout[:120]!r}") from error
 
 
 def asr_segments(media):
-    name, module = stt_backend()
     wav = media.with_suffix(".wav")
     run_or_fail(["ffmpeg", "-y", "-loglevel", "error", "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", str(wav)])
-    if name == "mlx-whisper":
-        result = module.transcribe(str(wav), path_or_hf_repo=f"mlx-community/whisper-{STT_MODEL}")
-        segments, language = [(int(s["start"]), s["text"]) for s in result["segments"]], result.get("language")
-    else:
-        model = module.WhisperModel(STT_MODEL, device="auto", compute_type="auto")
-        raw, info = model.transcribe(str(wav))
-        segments, language = [(int(s.start), s.text) for s in raw], info.language
-    wav.unlink()
-    return [(t, text.strip()) for t, text in segments if text.strip()], language
+    try:
+        return stt_result(run_or_fail(["uv", "run", "--quiet", "--script", str(STT_SCRIPT), str(wav)]).stdout)
+    finally:
+        wav.unlink(missing_ok=True)
 
 
 def transcript_markdown(info, segments):
@@ -401,6 +398,36 @@ def arxiv_id(url):
     return match[1] if match else None
 
 
+def latex_macros(tex):
+    """Simple \\newcommand{\\name}{text} definitions, the usual way papers name themselves."""
+    return dict(re.findall(r"\\(?:newcommand|renewcommand|def)\s*\{?\\(\w+)\}?\s*\{((?:[^{}]|\{[^{}]*\})*)\}", tex))
+
+
+def latex_text(fragment, macros=None):
+    """LaTeX to plain words: footnote-like macros vanish with their argument, other macros leave their argument."""
+    for name, value in (macros or {}).items():
+        fragment = re.sub(rf"\\{name}\b", lambda _match, value=value: value, fragment)
+    fragment = re.sub(
+        r"\\(thanks|footnote|footnotemark|inst|affil|email|icmlaffiliation)\*?\{(?:[^{}]|\{[^{}]*\})*\}", " ", fragment
+    )
+    fragment = re.sub(r"\\and\b", " and ", fragment)
+    fragment = re.sub(r"\$[^$]*\$", " ", fragment)
+    fragment = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?", " ", fragment)
+    return " ".join(fragment.replace("~", " ").replace("{", "").replace("}", "").replace("\\", " ").split())
+
+
+def latex_metadata(tex):
+    """Title and first author from the LaTeX itself, so a flaky arXiv API cannot blank them."""
+    braced = r"\s*(?:\[[^\]]*\])?\s*\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}"
+    title = re.search(r"\\title" + braced, tex, re.S)
+    author = re.search(r"\\author" + braced, tex, re.S)
+    macros = latex_macros(tex)
+    title_text = latex_text(title[1], macros).lstrip(":;,- ").strip() if title else ""
+    author_text = latex_text(author[1], macros) if author else ""
+    first = re.split(r"\s+and\s+|,", author_text)[0].strip() if author_text else ""
+    return {"title": title_text or None, "author": first or None}
+
+
 def arxiv_metadata(aid):
     try:
         entry = fetch(f"https://export.arxiv.org/api/query?id_list={aid}").decode().split("<entry>", 1)[1]
@@ -442,7 +469,7 @@ def arxiv_latex(aid, out):
 
 
 def write_arxiv_latex(aid, source, tex, out):
-    meta = arxiv_metadata(aid)
+    meta = {k: v for k, v in latex_metadata(tex).items() if v} or arxiv_metadata(aid)
     head = front_matter(meta.get("title") or aid, f"https://arxiv.org/abs/{aid}", meta.get("author"), meta.get("published"))
     write_nonempty(out / "text.md", head + tex)
     files = tex.count("--- file ")
@@ -464,17 +491,23 @@ def local_or_downloaded_pdf(source, aid, out):
     return path
 
 
-def write_pdf_pages(source, aid, out):
-    import pymupdf4llm
+def pdf_result(stdout):
+    try:
+        data = json.loads(stdout.strip().splitlines()[-1])
+        return data["text"], int(data["pages"]), int(data["images"])
+    except (ValueError, KeyError, IndexError, TypeError) as error:
+        raise IngestError(f"pdf extraction returned nothing usable: {stdout[:120]!r}") from error
 
+
+def write_pdf_pages(source, aid, out):
     path = local_or_downloaded_pdf(source, aid, out)
-    pages = pymupdf4llm.to_markdown(str(path), page_chunks=True, write_images=True, image_path=str(out / "images"))
-    text = "".join(f"\n\n--- page {n} ---\n\n{p['text']}" for n, p in enumerate(pages, 1))
+    text, pages, images = pdf_result(
+        run_or_fail(["uv", "run", "--quiet", "--script", str(PDF_SCRIPT), str(path), str(out / "images")]).stdout
+    )
     write_nonempty(out / "text.md", front_matter(path.stem, source) + text)
-    images = len(list((out / "images").glob("*")))
-    manifest = {"source_url": source, "format": "pdf", "pages": len(pages), "images": images}
+    manifest = {"source_url": source, "format": "pdf", "pages": pages, "images": images}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
-    print(f"{out}: {len(pages)} pages, {images} images. {next_step(out)}; grep '^--- page\\|^#' for the map")
+    print(f"{out}: {pages} pages, {images} images. {next_step(out)}; grep '^--- page\\|^#' for the map")
 
 
 def pdf(source, out):
@@ -613,23 +646,9 @@ def kind_for(url):
 
 
 def youtube_playlist(list_id, limit):
-    proc = run_or_fail(
-        [
-            sys.executable,
-            "-m",
-            "yt_dlp",
-            "--cookies-from-browser",
-            COOKIE_BROWSER,
-            "--flat-playlist",
-            "--no-warnings",
-            "--playlist-items",
-            f"1-{limit}",
-            "--print",
-            "%(url)s",
-            f"https://www.youtube.com/playlist?list={list_id}",
-        ]
-    )
-    return proc.stdout.split()
+    """Watch Later and Liked are private, so this is the one path that always needs cookies."""
+    args = ["--flat-playlist", "--no-warnings", "--playlist-items", f"1-{limit}", "--print", "%(url)s"]
+    return ytdlp([*args, f"https://www.youtube.com/playlist?list={list_id}"], cookies=True).split()
 
 
 def history_visits(history_file, min_minutes, days, limit, now=None):

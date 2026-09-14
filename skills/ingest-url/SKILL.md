@@ -2,10 +2,10 @@
 name: ingest-url
 description: "Turns a URL into agent-readable files on disk, and finds URLs worth ingesting. Prefer this over WebFetch for anything WebFetch cannot read: video (YouTube, Instagram reels, X, TikTok), the body of a PDF or arXiv paper, and audio. Video becomes a timestamped transcript with chapters (captions, else on-device speech-to-text), optionally scene-change frames with contact sheets; articles become clean markdown; arXiv papers become their LaTeX source; PDFs become markdown with page markers and figures. find searches YouTube, arXiv, Semantic Scholar, Hacker News, and GitHub for a topic and returns candidate URLs. Use when the user shares a link to read, watch, summarize, take notes on, or research, asks what a video, paper, post, or page says, or asks to find talks, papers, or discussions on a topic. Not for JSON APIs, deploying, interactive browsing, or general web search."
 license: MIT
-compatibility: "macOS or Linux with uv, ffmpeg, and a browser whose cookies yt-dlp can read (Chrome by default). Speech-to-text runs on-device: mlx-whisper on Apple Silicon, faster-whisper elsewhere. Network required."
+compatibility: "macOS or Linux with uv and ffmpeg. Browser cookies (Chrome by default) are read only when a site blocks the plain request. Speech-to-text runs on-device in a separate environment installed on first need. Network required."
 metadata:
   author: Satyajeet Das
-  version: "1.7.0"
+  version: "1.8.0"
   verified: "2026-09-08"
 ---
 
@@ -74,11 +74,12 @@ and never invent a project. Unreachable or empty items are already reported by `
 
 ## Pick the cheapest path that answers the question
 
-- Title, chapters, duration only: `yt-dlp --dump-json <url>`. No ingest needed.
+- Title, chapters, duration only: `video` (default) already prints them in its summary line and is
+  cached, so it costs nothing on repeat. Do not shell out to yt-dlp or ffmpeg yourself.
 - What was said: `video` (default). Read `text.md`: `CHAPTER mm:ss title` lines, then one
   `[mm:ss]` line per minute. Cite these timestamps.
-- One slide or moment at a known time: download once, then grab that frame directly.
-  `ffmpeg -ss 33:15 -i source.mp4 -frames:v 1 -vf scale=960:-1 slide.jpg`
+- One slide or moment at a known time: run `video --frames` once, then open the one
+  `frames/SSSSS.jpg` nearest that second.
 - Survey every slide or demo in a talk: `--frames`. Read `sheets/NN.jpg` first (48 frames
   per sheet, each labelled mm:ss, about 10 sheets per hour), then open only the
   `frames/SSSSS.jpg` you need. Whole-video frames are the expensive path; take it last.
@@ -87,10 +88,11 @@ and never invent a project. Unreachable or empty items are already reported by `
 
 - `no text extracted` or `fetch failed` on an article: paywall or client-rendered page. Open it
   with a browser tool that carries the user's login. Same for X posts and Instagram captions.
-- yt-dlp 403/429: the script already uses browser cookies and Chrome impersonation. If it still
-  fails, the site changed: run `uv tool upgrade yt-dlp`, retry once, then report.
-- `no speech-to-text backend importable`: run the script through `uv run` so its inline
-  dependencies install (mlx-whisper on Apple Silicon, faster-whisper elsewhere).
+- yt-dlp 403/429: the script retries once with browser cookies and Chrome impersonation, and says
+  so. If it still fails, the site changed: run `uv tool upgrade yt-dlp`, retry once, then report.
+- `speech-to-text returned no transcript`: the first no-caption video installs `scripts/stt.py`'s
+  environment (about 2 GB); if that is unwanted, say so instead of retrying.
+- First use is slow only until `scripts/setup` has run once; it pre-installs the environment.
 - Do not "succeed" by summarizing from the title, description, or memory. Report the failure.
 
 Design choices and measurements: `EVAL.md`. Self-check: `python3 scripts/test_ingest.py`.

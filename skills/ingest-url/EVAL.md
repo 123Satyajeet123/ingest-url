@@ -109,5 +109,15 @@ counts tabs left open, so the threshold separates "kept around" from "bounced", 
 The source reads a copy of the locked History file, filters by domain and duration, orders newest
 first, caps at --limit; tested against a synthetic History db in both directions.
 
+## Less intrusive (1.8.0)
+
+| measured | before | after |
+|---|---|---|
+| cold first run, fresh uv cache | 1m51s, 2.7 GB cache (torch via speech-to-text) | 10s, 115 MB installed (243 MB cache) |
+| speech-to-text, PDF extraction | in the main environment, paid by every call | `scripts/stt.py`, `scripts/pdf.py`, own environments, installed on first need |
+| browser cookies (macOS Keychain prompt) | every yt-dlp call | only on a retry after 403, 429, or a bot check; private playlists always |
+| harness permission prompts, one chapter-list task | 5 denials, no answer, no allow rule | 0 denials, answered, $0.22 with the three documented rules (script, Read, Grep); one run still saw 3 because the model tried raw yt-dlp before the skill |
+| paper title when the arXiv API returns nothing | fell back to the id | taken from the LaTeX source, macros resolved, footnotes stripped |
+
 ## Not covered
 Windows. TikTok end to end.

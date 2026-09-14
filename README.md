@@ -26,7 +26,17 @@ claude plugin marketplace add 123Satyajeet123/ingest-url && /plugin install inge
 pi install git:github.com/123Satyajeet123/ingest-url                                    # pi
 ```
 
-Needs `uv`, `ffmpeg`, and a browser whose cookies yt-dlp can read (`INGEST_BROWSER`, default chrome). Python dependencies, including the speech-to-text backend for the machine (mlx-whisper on Apple Silicon, faster-whisper elsewhere), install on first run.
+Needs `uv` and `ffmpeg`. Run `skills/ingest-url/scripts/setup` once so the first real use is instant;
+it installs the core environment (about 30 s). Videos without captions need the speech-to-text
+environment as well, `scripts/setup --stt`, about 2 GB, installed only if you ask or the first
+such video needs it. Browser cookies are not used unless a site blocks the plain request; then
+yt-dlp reads them from Chrome (`INGEST_BROWSER` to change), which on macOS asks the Keychain once.
+
+To stop the harness asking before each call, allow the script in `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(/path/to/skills/ingest-url/scripts/ingest.py:*)", "Read", "Grep"] } }
+```
 
 ## Use
 
