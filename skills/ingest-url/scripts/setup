@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Run once after installing the skill so the first real use is instant.
-#   scripts/setup          core environment (yt-dlp, trafilatura, pymupdf4llm, pillow)
-#   scripts/setup --stt    also the speech-to-text environment and its model (about 2.5 GB, needed only for videos without captions)
+# Optional. The first use installs everything it needs on its own; this only moves the wait earlier.
+#   scripts/setup          core and PDF environments
+#   scripts/setup --stt    also the speech-to-text environment and model (about 2 GB, needed only for videos without captions)
 set -euo pipefail
 HERE="${0:A:h}"
 for tool in uv ffmpeg; do command -v "$tool" >/dev/null || { echo "setup: $tool is required (brew install $tool)"; exit 1; }; done

@@ -92,7 +92,7 @@ and never invent a project. Unreachable or empty items are already reported by `
   so. If it still fails, the site changed: run `uv tool upgrade yt-dlp`, retry once, then report.
 - `speech-to-text returned no transcript`: the first no-caption video installs `scripts/stt.py`'s
   environment (about 2 GB); if that is unwanted, say so instead of retrying.
-- First use is slow only until `scripts/setup` has run once; it pre-installs the environment.
+- The first call on a machine installs the environment (about 10 s); do not treat that wait as a failure.
 - Do not "succeed" by summarizing from the title, description, or memory. Report the failure.
 
 Design choices and measurements: `EVAL.md`. Self-check: `python3 scripts/test_ingest.py`.

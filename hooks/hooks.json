@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(uv run --quiet --script \"${CLAUDE_PLUGIN_ROOT}/skills/ingest-url/scripts/ingest.py\" --help >/dev/null 2>&1 &)",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
